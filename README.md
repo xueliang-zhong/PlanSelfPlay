@@ -102,8 +102,8 @@ SELECTION: keep candidates (git commit patches) with better results than previou
 ```bash
 GENERATIONS=100
 for ((i=1; i<=$GENERATIONS; i++)); do
-  claude -p - < PLAN.txt      # or: codex --full-auto exec - < PLAN.txt
-done                           #     or: opencode run - < PLAN.txt
+  codex --full-auto exec - < PLAN.txt
+done
 ```
 
 In practice, each generation reads prior notes, works inside the repo-level
