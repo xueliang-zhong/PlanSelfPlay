@@ -32,17 +32,6 @@ changed, and copy the pattern into another repo the same day.
 - Reusable: each run leaves behind human-readable artifacts that the next run
   can learn from.
 
-## What A Run Leaves Behind
-
-After a useful run, you usually have some mix of:
-
-- A working-tree diff you can inspect with normal git tools
-- A local commit when the result is clearly better
-- A `codex_*.md` note when your plan asks the agent to write one
-
-That makes the loop useful both as a research trace and as an engineering
-workflow you can review, replay, and tighten with normal git habits.
-
 ## Quickstart
 
 Requirements: `bash`, `codex` on `PATH`, and `timeout` if you want the bundled
@@ -53,9 +42,6 @@ If you want proof before theory, start here:
 ```bash
 # preview the exact command without running it
 ./planselfplay.sh --dry-run
-
-# watch a short run live
-STDOUT_MODE=inherit ./planselfplay.sh --generations 3
 
 # copy the example PLAN, then customize it
 cp PLAN.example.txt plan.txt
@@ -122,7 +108,7 @@ Then:
 4. Preserve plain-text trajectory artifacts such as `codex_*.md`, diffs, and
    commits so the next run can retrieve prior cases instead of starting cold.
 
-## Why It Stays Small
+## Design Choise
 
 - Pure text over hidden state: the PLAN is the policy.
 - One small loop over framework glue: the runner stays easy to audit.
@@ -133,7 +119,7 @@ Then:
 
 ## Mapping PLAN File to ML Concepts
 
-The PLAN is closer to a compact search policy with external memory, so each
+The PLAN is close to a compact search policy with external memory, so each
 control maps to the nearest optimization or agent-learning role.
 
 | PLAN File (Line by Line)                                                                                      | ML / Optimization Concepts                                                          | References                                                                                                                                                                                                                                                                                                                       |
