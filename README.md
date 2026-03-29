@@ -24,14 +24,6 @@ changed, and copy the pattern into another repo the same day.
 - Want the shell mechanics first: read `planselfplay.sh`.
 - Want the shortest runnable path: run `./planselfplay.sh --dry-run`.
 
-## When This Pattern Helps
-
-- Portable: copy the repo, edit the PLAN, and rerun the loop.
-- Inspectable: the policy stays in readable text, not hidden orchestration state.
-- Low overhead: you can try it with `bash`, `codex`, and normal git habits.
-- Reusable: each run leaves behind human-readable artifacts that the next run
-  can learn from.
-
 ## Quickstart
 
 Requirements: `bash`, `codex` on `PATH`, and `timeout` if you want the bundled
