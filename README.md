@@ -10,13 +10,15 @@ into framework internals.
 You can read the whole setup in a few minutes, see what each generation
 changed, and copy the pattern into another repo the same day.
 
+Works with **codex**, **claude** (Claude Code), and **opencode** out of the box.
+
 ## At A Glance
 
 | Part | What it is | Why it matters |
 | --- | --- | --- |
 | Policy | `PLAN.example.txt` | Keeps the agent rules, memory, strategy, and constraints in plain text |
-| Runner | `planselfplay.sh` | Replays the plan through `codex exec -` with a tiny shell loop |
-| Outputs | diffs, commits, and optional `codex_*.md` notes | Keeps the trajectory visible in normal repo artifacts |
+| Runner | `planselfplay.sh` | Replays the plan through the chosen agent with a tiny shell loop |
+| Outputs | diffs, commits, and optional `agent_*.md` notes | Keeps the trajectory visible in normal repo artifacts |
 
 ## Start Here
 
@@ -26,19 +28,40 @@ changed, and copy the pattern into another repo the same day.
 
 ## Quickstart
 
-Requirements: `bash`, `codex` on `PATH`, and `timeout` if you want the bundled
-bounded-scan rule.
+Requirements: `bash`, at least one of `codex` / `claude` / `opencode` on
+`PATH`, and `timeout` if you want the bundled bounded-scan rule.
 
 If you want proof before theory, start here:
 
 ```bash
-# preview the exact command without running it
+# preview the exact command without running it (defaults to codex)
 ./planselfplay.sh --dry-run
 
 # copy the example PLAN, then customize it
 cp PLAN.example.txt plan.txt
+
+# run with codex (default)
 ./planselfplay.sh --plan plan.txt --generations 6
+
+# run with Claude Code
+./planselfplay.sh --agent claude --plan plan.txt --generations 6
+
+# run with opencode
+./planselfplay.sh --agent opencode --plan plan.txt --generations 6
 ```
+
+## Agent Presets
+
+Each agent is pre-configured to read the plan from stdin in non-interactive mode:
+
+| Agent | Default command |
+| --- | --- |
+| `codex` | `codex --full-auto exec -` |
+| `claude` | `claude -p -` |
+| `opencode` | `opencode run -` |
+
+Override any preset with `--agent-bin` and `--agent-args`, or via env vars
+`AGENT_BIN` and `AGENT_ARGS`.
 
 ## Repo Map
 
@@ -47,7 +70,7 @@ The public surface area is intentionally small and easy to audit:
 | File | Role |
 | --- | --- |
 | [PLAN.example.txt](PLAN.example.txt) | Bundled example PLAN and plain-text appendix |
-| [planselfplay.sh](planselfplay.sh) | Small driver that replays a PLAN through `codex exec -` |
+| [planselfplay.sh](planselfplay.sh) | Small driver that replays a PLAN through the chosen agent |
 | [README.md](README.md) | Overview, quickstart, adaptation guide, and optional ML mapping |
 | [LICENSE](LICENSE) | MIT license |
 
@@ -68,10 +91,10 @@ and one shell script replays it. A quick example can be found at
 ```text
 DOMAIN: this repo/folder contains ___ (topic).
 GOAL: optimize this work to have less/more of ___.
-LEARN FROM PREVIOUS RUNS: read any local codex_*.md notes before changing anything.
+LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything.
 STRATEGY: use a 90%/10% split between refinement and one mutation.
 RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently."
-AT TASK COMPLETION: write codex_<topic>_memory.md.
+AT TASK COMPLETION: write agent_<topic>_memory.md.
 SELECTION: keep candidates (git commit patches) with better results than previous work.
 ```
 
@@ -79,8 +102,8 @@ SELECTION: keep candidates (git commit patches) with better results than previou
 ```bash
 GENERATIONS=100
 for ((i=1; i<=$GENERATIONS; i++)); do
-  codex --full-auto exec - < PLAN.txt
-done
+  claude -p - < PLAN.txt      # or: codex --full-auto exec - < PLAN.txt
+done                           #     or: opencode run - < PLAN.txt
 ```
 
 In practice, each generation reads prior notes, works inside the repo-level
@@ -96,17 +119,19 @@ Then:
 1. Rewrite `DOMAIN` and `GOAL` so they match the repo and the optimization target.
 2. Keep `LEARN FROM PREVIOUS RUNS`, `STRATEGY`, `RETHINK`, and `AT TASK COMPLETION` unless you intentionally want a different memory or search loop.
 3. Update `SUCCESS CONDITION` and `CONSTRAINTS` to fit the environment you care about.
-4. Preserve plain-text trajectory artifacts such as `codex_*.md`, diffs, and
+4. Preserve plain-text trajectory artifacts such as `agent_*.md`, diffs, and
    commits so the next run can retrieve prior cases instead of starting cold.
 
-## Design Choise
+## Design Choices
 
 - Pure text over hidden state: the PLAN is the policy.
 - One small loop over framework glue: the runner stays easy to audit.
-- Ordinary artifacts over special storage: diffs, commits, and `codex_*.md`
+- Ordinary artifacts over special storage: diffs, commits, and `agent_*.md`
   preserve the trajectory.
 - Small control surface over broad automation: fewer moving parts make the
   pattern easier to reuse and review.
+- Agent-agnostic by default: codex, claude, and opencode all work with the
+  same PLAN file and the same shell loop.
 
 ## Mapping PLAN File to ML Concepts
 
@@ -117,10 +142,10 @@ control maps to the nearest optimization or agent-learning role.
 |---------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | DOMAIN: this repo/folder contains ___ (topic).                                                                | Problem formulation plus state space: what task and repo state the run can explore. | [Wiki: Optimization problem](https://en.wikipedia.org/wiki/Optimization_problem)<br>[Wiki: State-space search](https://en.wikipedia.org/wiki/State-space_search)                                                                                                                                                                 |
 | GOAL: optimize this work to have less/more of ___.                                                            | Loss / fitness function: what counts as better.                                     | [Wiki: Loss function](https://en.wikipedia.org/wiki/Loss_function)<br>[Wiki: Fitness function](https://en.wikipedia.org/wiki/Fitness_function)                                                                                                                                                                                   |
-| LEARN FROM PREVIOUS RUNS: read any local codex_*.md notes before changing anything.                           | Retrieved case memory: reuse prior cases instead of updating weights.               | [Wiki: Case-based reasoning](https://en.wikipedia.org/wiki/Case-based_reasoning)<br>[Paper: Reflexion: Language Agents with Verbal Reinforcement Learning](https://arxiv.org/abs/2303.11366)                                                                                                                                     |
+| LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything.                           | Retrieved case memory: reuse prior cases instead of updating weights.               | [Wiki: Case-based reasoning](https://en.wikipedia.org/wiki/Case-based_reasoning)<br>[Paper: Reflexion: Language Agents with Verbal Reinforcement Learning](https://arxiv.org/abs/2303.11366)                                                                                                                                     |
 | STRATEGY: use a 90%/10% split between refinement and one mutation.                                            | Exploration/exploitation policy: mostly local search, with a small mutation budget. | [Wiki: Exploration-exploitation dilemma](https://en.wikipedia.org/wiki/Exploration%E2%80%93exploitation_dilemma)<br>[Wiki: Local search (optimization)](https://en.wikipedia.org/wiki/Local_search_(optimization))<br>[Wiki: Mutation (evolutionary algorithm)](https://en.wikipedia.org/wiki/Mutation_(evolutionary_algorithm)) |
 | RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." | Mandatory self-critique and revision step.                                          | [Paper: Self-Refine: Iterative Refinement with Self-Feedback](https://arxiv.org/abs/2303.17651)                                                                                                                                                                                                                                  |
-| AT TASK COMPLETION: write codex_<topic>_memory.md.                                                            | Memory write-back: compress the run into a reusable case.                           | [Paper: ExpeL: LLM Agents Are Experiential Learners](https://arxiv.org/abs/2308.10144)<br>[Wiki: Case-based reasoning](https://en.wikipedia.org/wiki/Case-based_reasoning)                                                                                                                                                       |
+| AT TASK COMPLETION: write agent_<topic>_memory.md.                                                            | Memory write-back: compress the run into a reusable case.                           | [Paper: ExpeL: LLM Agents Are Experiential Learners](https://arxiv.org/abs/2308.10144)<br>[Wiki: Case-based reasoning](https://en.wikipedia.org/wiki/Case-based_reasoning)                                                                                                                                                       |
 | SELECTION: keep candidates (git commit patches) with better results.                                          | Selection rule: keep (git commit) only clearly better candidates.                   | [Wiki: Selection (evolutionary algorithm)](https://en.wikipedia.org/wiki/Selection_(evolutionary_algorithm))                                                                                                                                                                                                                     |
 | CONSTRAINTS: ...                                                                                              | Hard constraints and feasible region: what must stay valid while optimizing.        |                                                                                                                                                                                                                                                                                                                                  |
 

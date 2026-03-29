@@ -9,7 +9,7 @@ STRATEGY: use a 90%/10% probability split between refining the strongest current
 
 RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then choose the smaller, safer, clearer, easier-to-review version.
 
-AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped codex_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
+AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
 
 SELECTION:
 - if the result is clearly better, create a local git commit whose message says what changed and what improved
