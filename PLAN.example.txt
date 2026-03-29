@@ -1,0 +1,19 @@
+DOMAIN: this repository demonstrates pure-text agent self-play: one PLAN file, one shell loop, ordinary diffs, and minimal hidden state.
+
+GOAL:
+- maximize discoverability, clarity, trust, and reuse
+- minimize patch size, review cost, and maintenance cost
+
+LEARN FROM PREVIOUS RUNS: read any local codex_*.md notes before changing anything so you extend the existing trajectory instead of restarting it.
+
+STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
+
+RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then choose the smaller, safer, clearer, easier-to-review version.
+
+AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped codex_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
+
+SELECTION:
+- if the result is clearly better, create a local git commit whose message says what changed and what improved
+- otherwise, `git reset` the repo to its pre-task state
+
+CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; treat protected control files (such as this PLAN file) as fixed unless the goal explicitly puts them in scope.
