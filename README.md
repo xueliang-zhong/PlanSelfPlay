@@ -45,7 +45,6 @@ If you want proof before theory, start here:
 
 # copy the example PLAN, then customize it
 cp PLAN.example.txt plan.txt
-# edit plan.txt with your goals and workflow rules
 ./planselfplay.sh --plan plan.txt --generations 6
 ```
 
