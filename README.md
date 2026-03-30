@@ -31,23 +31,21 @@ If you want proof before theory, start here:
 # preview the exact command without running it (defaults to codex)
 ./planselfplay.sh --dry-run
 
-# copy the example PLAN, then customize it
-cp PLAN.example.txt plan.txt
-
-# run with codex (default)
-./planselfplay.sh --plan plan.txt --generations 6
-
-# run with other agents
-./planselfplay.sh --agent claude --plan plan.txt --generations 6
-./planselfplay.sh --agent opencode --plan plan.txt --generations 6
-
-# run 3 agents in parallel per generation
-./planselfplay.sh --plan plan.txt --generations 6 -j3
-
 # run without a plan file
 ./planselfplay.sh --goal "reduce LOC across the repo while preserving feature parity"
 ./planselfplay.sh --goal "maximise function-level test coverage"
 ./planselfplay.sh --goal "eliminate duplicate logic in this project"
+
+# run with a customized PLAN with codex (default)
+cp PLAN.example.txt plan.txt
+./planselfplay.sh --plan plan.txt --generations 6
+
+# run 3 agents in parallel per generation
+./planselfplay.sh --plan plan.txt --generations 6 -j3
+
+# run with other agents
+./planselfplay.sh --agent claude --plan plan.txt --generations 6
+./planselfplay.sh --agent opencode --plan plan.txt --generations 6
 ```
 
 ## Agent Presets
