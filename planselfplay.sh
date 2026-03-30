@@ -96,7 +96,9 @@ AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-time
 
 UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
 
-WRITE SKILLS: if you discovered a reusable technique that worked reliably, distill it into skill_<topic>.md (one skill per file, ≤30 lines, concrete and actionable).
+WRITE SKILLS: promote a lesson into skill_<topic>.md only when it is reusable, concrete, and likely to help many future runs. Do not create a skill for a one-off repo quirk, a weak hunch, or a trick that succeeded only once.
+
+SKILL HYGIENE: patch an existing skill when refining the same technique; create a new skill only for a genuinely different technique. Keep skills short, actionable, and low-duplication.
 
 SELECTION:
 - if the result is clearly better, create a local git commit whose message says what changed and what improved
