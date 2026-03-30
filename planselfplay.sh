@@ -277,7 +277,7 @@ for ((generation=1; generation<=generations; generation++)); do
     if (( ${#active_branches[@]} == 0 )); then
       printf 'PLANSELFPLAY %d/%d | no members produced commits\n' "$generation" "$generations"
     elif (( ${#active_branches[@]} > 1 )) && \
-         git merge --no-ff --no-edit "${active_branches[@]}" >/dev/null 2>&1; then
+         git merge --no-ff -m "psp: octopus merge gen${generation} [$(IFS=,; echo "${active_branches[*]/#*-/}")]" "${active_branches[@]}" >/dev/null 2>&1; then
       # Tier 1: octopus merge — all branches, no conflicts
       printf 'PLANSELFPLAY %d/%d | octopus: merged all %d active branches\n' \
         "$generation" "$generations" "${#active_branches[@]}"
@@ -292,13 +292,13 @@ for ((generation=1; generation<=generations; generation++)); do
         new_commits=$(git rev-list HEAD.."${wt_branch}" --count 2>/dev/null || echo 0)
         if (( new_commits == 0 )); then
           git branch -D "${wt_branch}" 2>/dev/null || true
-        elif git merge --no-ff --no-edit "${wt_branch}" >/dev/null 2>&1; then
+        elif git merge --no-ff -m "psp: merge [psp:gen${generation}-m${member_num}]" "${wt_branch}" >/dev/null 2>&1; then
           printf 'PLANSELFPLAY %d/%d [%d/%d] | merged %d commit(s)\n' \
             "$generation" "$generations" "$member_num" "$population" "$new_commits"
           git branch -D "${wt_branch}" 2>/dev/null || true
         else
           git merge --abort 2>/dev/null || true
-          if git merge --no-ff --no-edit -X ours "${wt_branch}" >/dev/null 2>&1; then
+          if git merge --no-ff -m "psp: partial merge [psp:gen${generation}-m${member_num}] (-X ours)" -X ours "${wt_branch}" >/dev/null 2>&1; then
             # Tier 3: ours strategy — non-conflicting hunks taken, main wins conflicts
             printf 'PLANSELFPLAY %d/%d [%d/%d] | partial merge (-X ours, %d commit(s))\n' \
               "$generation" "$generations" "$member_num" "$population" "$new_commits"
