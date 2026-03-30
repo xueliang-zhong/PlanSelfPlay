@@ -179,7 +179,8 @@ constraints.
 ./planselfplay.sh --agent claude --agent-args "-p --dangerously-skip-permissions -" --plan plan.txt
 ```
 
-**These flags remove every guardrail.** The agent will run destructive commands without asking. Useful for keeping long runs unblocked, but commit your work and use a throwaway branch first. There could be no undo.
+> [!WARNING]
+> These flags remove every guardrail. The agent will run destructive commands without asking. Useful for keeping long runs unblocked, but commit your work and use a throwaway branch first. There could be no undo.
 
 **Population (`-jN`).** Runs N agents in parallel per generation. Git worktree isolation per member is enabled by default for `-jN` runs, so each agent works on its own branch without racing. After each generation, worktree paths are cleaned up and the member branches (`psp/gen{g}-m{1..N}`) are left for inspection and merging.
 
