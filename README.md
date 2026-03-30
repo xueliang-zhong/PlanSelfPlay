@@ -12,12 +12,15 @@ changed, and copy the pattern into another repo the same day.
 
 Works with **codex**, **claude** (Claude Code), and **opencode** out of the box.
 
+Use `./planselfplay.sh` as the canonical entrypoint, or `./psp` as a short wrapper.
+
 ## At A Glance
 
 | Part | What it is | Why it matters |
 | --- | --- | --- |
 | Policy | `plan.example.txt` | Keeps the agent rules, memory, strategy, and constraints in plain text |
 | Runner | `planselfplay.sh` | Replays the plan through the chosen agent with a tiny shell loop |
+| Shortcut | `psp` | Thin wrapper that forwards to `planselfplay.sh` for shorter daily use |
 | Outputs | diffs, commits, and optional `agent_*.md` notes | Keeps the trajectory visible in normal repo artifacts |
 
 ## Quickstart
@@ -30,6 +33,7 @@ If you want proof before theory, start here:
 ```bash
 # Preview the resolved command without running anything
 ./planselfplay.sh --dry-run
+./psp --dry-run
 
 # Run the built-in plan template with a custom goal
 ./planselfplay.sh --goal "reduce lines of code"
@@ -73,6 +77,7 @@ The public surface area is intentionally small and easy to audit:
 | --- | --- |
 | [plan.example.txt](plan.example.txt) | Bundled example PLAN and plain-text appendix |
 | [planselfplay.sh](planselfplay.sh) | Small driver that replays a PLAN through the chosen agent |
+| [psp](psp) | Tiny wrapper that execs `planselfplay.sh` with the same arguments |
 | [README.md](README.md) | Overview, quickstart, adaptation guide, and optional ML mapping |
 | [LICENSE](LICENSE) | MIT license |
 
