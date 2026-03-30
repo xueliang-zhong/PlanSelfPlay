@@ -7,7 +7,7 @@ LEARN FROM PREVIOUS RUNS: read any local codex_*.md notes before changing anythi
 
 STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
 
-RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then choose the smaller, safer, clearer, easier-to-review version.
+RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then improve the design based on rethink.
 
 AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
 

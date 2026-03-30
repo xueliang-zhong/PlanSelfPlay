@@ -4,6 +4,7 @@ agent="${AGENT:-codex}"
 plan_path="${PLAN_PATH:-${PWD}/PLAN.example.txt}"
 agent_bin=""
 agent_args_text=""
+goal_text="${GOAL:-}"
 generations="${GENERATIONS:-10}"
 sleep_seconds="${SLEEP_SECONDS:-2}"
 stdout_mode="${STDOUT_MODE:-discard}"
@@ -21,6 +22,7 @@ Replay a pure-text PLAN through a coding agent (codex, claude, or opencode).
 Options:
   --agent codex|claude|opencode  Coding agent to use (default: codex)
   --plan PATH                    Plan file to replay
+  --goal TEXT                    Replace the GOAL: line in the plan with this text
   --generations N                Positive integer
   --sleep SECONDS                Non-negative delay between generations
   --stdout discard|inherit       Agent stdout handling
@@ -34,7 +36,7 @@ Agent presets (overridable via --agent-args):
   claude    -> claude -p -
   opencode  -> opencode run -
 
-Environment: AGENT PLAN_PATH AGENT_BIN AGENT_ARGS GENERATIONS SLEEP_SECONDS STDOUT_MODE DRY_RUN
+Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS SLEEP_SECONDS STDOUT_MODE DRY_RUN
              (legacy: CODEX_BIN CODEX_ARGS map to AGENT_BIN AGENT_ARGS for codex)
 EOF
 }
@@ -45,6 +47,7 @@ while (( $# )); do
     --dry-run)    dry_run=1 ;;
     --agent)      agent="$(arg "$@")"; shift ;;
     --plan)       set_plan "$(arg "$@")"; shift ;;
+    --goal)       goal_text="$(arg "$@")"; shift ;;
     --generations) generations="$(arg "$@")"; shift ;;
     --sleep)      sleep_seconds="$(arg "$@")"; shift ;;
     --stdout)     stdout_mode="$(arg "$@")"; shift ;;
@@ -85,16 +88,23 @@ agent_args=()
 [[ -n "$agent_args_text" ]] && read -r -a agent_args <<< "$agent_args_text"
 agent_command=("$agent_bin" "${agent_args[@]}")
 
-printf 'PLANSELFPLAY CONFIG | agent=%s | plan=%s | generations=%s | sleep=%s | stdout=%s | bin=%s | args=%s\n' \
-  "$agent" "$plan_path" "$generations" "$sleep_seconds" "$stdout_mode" "$agent_bin" "$agent_args_text"
+printf 'PLANSELFPLAY CONFIG | agent=%s | plan=%s | goal=%s | generations=%s | sleep=%s | stdout=%s | bin=%s | args=%s\n' \
+  "$agent" "$plan_path" "${goal_text:-(none)}" "$generations" "$sleep_seconds" "$stdout_mode" "$agent_bin" "$agent_args_text"
 if [[ "$dry_run" == 1 ]]; then
   printf 'PLANSELFPLAY DRY RUN |'; printf ' %q' "${agent_command[@]}"; printf ' < %q\n' "$plan_path"; exit 0
 fi
 
 command -v "$agent_bin" >/dev/null 2>&1 || die "Required command not found on PATH: $agent_bin"
+effective_plan="$plan_path"
+if [[ -n "$goal_text" ]]; then
+  tmp_plan=$(mktemp "${PWD}/$(basename "${plan_path%.*}").tmp.XXXXXX")
+  trap 'rm -f "$tmp_plan"' EXIT
+  awk -v goal="$goal_text" '/^GOAL:/{print "GOAL: " goal; next} {print}' "$plan_path" > "$tmp_plan"
+  effective_plan="$tmp_plan"
+fi
 for ((generation=1; generation<=generations; generation++)); do
   printf 'PLANSELFPLAY %d/%d | agent=%s | plan=%s | bin=%s | args=%s\n' \
     "$generation" "$generations" "$agent" "$plan_path" "$agent_bin" "$agent_args_text"
-  "${agent_command[@]}" < "$plan_path" > "$stdout_target"
+  "${agent_command[@]}" < "$effective_plan" > "$stdout_target"
   (( generation < generations )) && sleep "$sleep_seconds"
 done
