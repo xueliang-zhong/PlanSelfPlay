@@ -167,6 +167,8 @@ constraints.
 
 **Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement.
 
+**Population (`-jN`).** Runs N agents in parallel per generation. Safe for read-only or fully isolated workloads. For agents that write to the repo, parallel members will race on the same working tree — git worktree isolation (one branch per member) is the fix and is planned.
+
 ## Inspiration
 
 This project is inspired by `karpathy/autoresearch`. The difference here is the
