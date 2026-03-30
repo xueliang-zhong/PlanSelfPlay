@@ -43,11 +43,14 @@ cp PLAN.example.txt plan.txt
 # run with codex (default)
 ./planselfplay.sh --plan plan.txt --generations 6
 
-# run with Claude Code
+# run with other agents
 ./planselfplay.sh --agent claude --plan plan.txt --generations 6
-
-# run with opencode
 ./planselfplay.sh --agent opencode --plan plan.txt --generations 6
+
+# run without a plan file
+./planselfplay.sh --goal "reduce LOC across the repo while preserving feature parity"
+./planselfplay.sh --goal "maximise function-level test coverage"
+./planselfplay.sh --goal "eliminate duplicate logic in this project"
 ```
 
 ## Agent Presets
