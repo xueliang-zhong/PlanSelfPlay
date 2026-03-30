@@ -17,6 +17,28 @@ init_plan_path=""
 quit() { printf '%s\n' "$*" >&2; exit 1; }
 arg() { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
 set_plan() { (( plan_seen == 0 )) || quit "Provide the plan path once"; plan_seen=1; plan_explicit=1; plan_path="$1"; }
+archive_parallel_branch() {
+  local branch="$1" timestamp backup_branch
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_branch="psp/stale/${timestamp}-${branch#psp/}"
+  git show-ref --verify --quiet "refs/heads/$backup_branch" && backup_branch="${backup_branch}-$$"
+  git branch -m "$branch" "$backup_branch" >/dev/null 2>&1 \
+    || quit "Could not archive stale parallel branch: $branch"
+  printf 'PLANSELFPLAY | preserved stale branch as %s\n' "$backup_branch"
+}
+prepare_parallel_slot() {
+  local branch="$1" path="$2" ahead=0
+  git worktree remove --force "$path" 2>/dev/null || true
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    ahead=$(git rev-list HEAD.."$branch" --count 2>/dev/null || echo 0)
+    if (( ahead > 0 )); then
+      archive_parallel_branch "$branch"
+      return
+    fi
+    git branch -D "$branch" >/dev/null 2>&1 \
+      || quit "Could not clear stale parallel branch: $branch"
+  fi
+}
 usage() {
   cat <<EOF
 Usage: ${0##*/} [options] [plan-path]
@@ -188,6 +210,7 @@ for ((generation=1; generation<=generations; generation++)); do
     if (( population > 1 )); then
       wt_branch="psp/gen${generation}-m${member}"
       wt_path="${repo_root}/.psp/gen${generation}-m${member}"
+      prepare_parallel_slot "$wt_branch" "$wt_path"
       git worktree add -q -b "$wt_branch" "$wt_path" HEAD
       (cd "$wt_path" && "${agent_command[@]}" < "$effective_plan" > "$stdout_target") &
     else
