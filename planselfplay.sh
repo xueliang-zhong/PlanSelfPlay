@@ -80,7 +80,9 @@ DOMAIN: the current working directory and its contents.
 
 GOAL: $1
 
-LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything so you extend the existing trajectory instead of restarting it.
+LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.
+
+LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes that seem relevant before changing anything so you extend the existing trajectory instead of restarting it.
 
 APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply relevant ones to your approach.
 
@@ -91,6 +93,8 @@ STRATEGY: use a 90%/10% probability split between refining the strongest current
 RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then improve the design based on rethink.
 
 AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
+
+UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
 
 WRITE SKILLS: if you discovered a reusable technique that worked reliably, distill it into skill_<topic>.md (one skill per file, ≤30 lines, concrete and actionable).
 
@@ -305,14 +309,14 @@ for ((generation=1; generation<=generations; generation++)); do
             git branch -D "${wt_branch}" 2>/dev/null || true
           else
             git merge --abort 2>/dev/null || true
-            # Last resort: rescue agent_*.md memory files
+            # Last resort: rescue knowledge artifacts
             printf 'PLANSELFPLAY %d/%d [%d/%d] | conflict, rescuing memory (branch kept: %s)\n' \
               "$generation" "$generations" "$member_num" "$population" "${wt_branch}"
             while IFS= read -r f; do
               [[ -z "$f" ]] && continue
               git show "${wt_branch}:${f}" > "${repo_root}/${f}" 2>/dev/null || true
-            done < <(git diff --name-only HEAD "${wt_branch}" -- 'agent_*.md' 'skill_*.md' 'FAILED_PATHS.md' 2>/dev/null)
-            git add -- 'agent_*.md' 'skill_*.md' 'FAILED_PATHS.md' 2>/dev/null || true
+            done < <(git diff --name-only HEAD "${wt_branch}" -- 'agent_*.md' 'skill_*.md' 'FAILED_PATHS.md' 'CURRENT_MEMORY.md' 2>/dev/null)
+            git add -- 'agent_*.md' 'skill_*.md' 'FAILED_PATHS.md' 'CURRENT_MEMORY.md' 2>/dev/null || true
             git diff --cached --quiet \
               || git commit -m "psp: rescue knowledge artifacts from gen${generation}-m${member_num} (conflict)"
           fi

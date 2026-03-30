@@ -93,12 +93,14 @@ and one shell script replays it. A quick example can be found at
 ```text
 DOMAIN: this repo/folder contains ___ (topic).
 GOAL: optimize this work to have less/more of ___.
-LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything.
+LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.
+LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes that seem relevant before changing anything.
 APPLY SKILLS: read any skill_*.md files and apply relevant ones.
 DEAD ENDS: read FAILED_PATHS.md; never re-try listed approaches; append new failures with reason.
 STRATEGY: use a 90%/10% split between refinement and one mutation.
 RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently."
 AT TASK COMPLETION: write agent_<topic>_memory.md.
+UPDATE CURRENT MEMORY: merge still-relevant lessons into CURRENT_MEMORY.md.
 WRITE SKILLS: distill a reliable technique into skill_<topic>.md (≤30 lines).
 SELECTION: keep candidates (git commit patches) with better results than previous work.
 CONSTRAINTS: work only inside this repo; never scan outside it.
@@ -123,7 +125,7 @@ where most of the customization lives.
 Then:
 
 1. Rewrite `DOMAIN` and `GOAL` so they match the repo and the optimization target.
-2. Keep `LEARN FROM PREVIOUS RUNS`, `APPLY SKILLS`, `DEAD ENDS`, `STRATEGY`, `RETHINK`, `AT TASK COMPLETION`, and `WRITE SKILLS` unless you intentionally want a different memory or search loop.
+2. Keep `LEARN FROM CURRENT MEMORY`, `LEARN FROM PREVIOUS RUNS`, `APPLY SKILLS`, `DEAD ENDS`, `STRATEGY`, `RETHINK`, `AT TASK COMPLETION`, `UPDATE CURRENT MEMORY`, and `WRITE SKILLS` unless you intentionally want a different memory or search loop.
 3. Update `SUCCESS CONDITION` and `CONSTRAINTS` to fit the environment you care about.
 4. Preserve plain-text trajectory artifacts such as `agent_*.md`, diffs, and
    commits so the next run can retrieve prior cases instead of starting cold.
@@ -132,7 +134,8 @@ Then:
 
 - Pure text over hidden state: the PLAN is the policy.
 - One small loop over framework glue: the runner stays easy to audit.
-- Ordinary artifacts over special storage: diffs, commits, and `agent_*.md`
+- Ordinary artifacts over special storage: diffs, commits, `agent_*.md`,
+  `CURRENT_MEMORY.md`, and `skill_*.md`
   preserve the trajectory.
 - Small control surface over broad automation: fewer moving parts make the
   pattern easier to reuse and review.
@@ -148,17 +151,31 @@ control maps to the nearest optimization or agent-learning role.
 |---------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | DOMAIN: this repo/folder contains ___ (topic).                                                                | Problem formulation and search space: defines scope, context, and valid states the agent may explore.       | [Wiki: State space](https://en.wikipedia.org/wiki/State_space_(computer_science))<br>[Wiki: Search problem](https://en.wikipedia.org/wiki/Search_algorithm)                                                                                                                     |
 | GOAL: optimize this work to have less/more of ___.                                                            | Loss / fitness function: the scalar signal that defines "better" and drives selection.                      | [Wiki: Loss function](https://en.wikipedia.org/wiki/Loss_function)<br>[Wiki: Fitness function](https://en.wikipedia.org/wiki/Fitness_function)                                                                                                                                  |
-| LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything.                           | Episodic memory retrieval: load prior experience so the agent extends the trajectory instead of restarting. | [Wiki: Episodic memory](https://en.wikipedia.org/wiki/Episodic_memory)<br>[Wiki: Case-based reasoning](https://en.wikipedia.org/wiki/Case-based_reasoning)<br>[Paper: Reflexion](https://arxiv.org/abs/2303.11366)                                                              |
+| LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.                                          | Active working memory: load the current high-signal summary before diving into detailed archives.            | [Wiki: Working memory](https://en.wikipedia.org/wiki/Working_memory)<br>[Wiki: Memory consolidation](https://en.wikipedia.org/wiki/Memory_consolidation)                                                                                                                         |
+| LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes that seem relevant before changing anything.        | Episodic memory retrieval: load prior experience so the agent extends the trajectory instead of restarting. | [Wiki: Episodic memory](https://en.wikipedia.org/wiki/Episodic_memory)<br>[Wiki: Case-based reasoning](https://en.wikipedia.org/wiki/Case-based_reasoning)<br>[Paper: Reflexion](https://arxiv.org/abs/2303.11366)                                                              |
 | APPLY SKILLS: read any skill_*.md files and apply relevant ones.                                               | Procedural memory retrieval: reuse distilled techniques rather than re-deriving from scratch.               | [Wiki: Procedural memory](https://en.wikipedia.org/wiki/Procedural_memory)<br>[Wiki: Transfer learning](https://en.wikipedia.org/wiki/Transfer_learning)<br>[Paper: Voyager (skill library for open-ended agents)](https://arxiv.org/abs/2305.16291)                            |
 | DEAD ENDS: read FAILED_PATHS.md; never re-try listed approaches; append new failures with reason.              | Negative experience memory: prune the search space by excluding approaches known to fail.                   | [Wiki: Tabu search](https://en.wikipedia.org/wiki/Tabu_search)<br>[Wiki: Constraint satisfaction](https://en.wikipedia.org/wiki/Constraint_satisfaction_problem)                                                                                                                |
 | STRATEGY: use a 90%/10% split between refinement and one mutation.                                            | Exploration/exploitation policy: mostly local search around the current best, with a small mutation budget. | [Wiki: Exploration-exploitation dilemma](https://en.wikipedia.org/wiki/Exploration%E2%80%93exploitation_dilemma)<br>[Wiki: Local search](https://en.wikipedia.org/wiki/Local_search_(optimization))<br>[Wiki: Mutation (evolutionary algorithm)](https://en.wikipedia.org/wiki/Mutation_(evolutionary_algorithm)) |
 | RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." | Mandatory self-critique: forces a revision pass before acting, reducing premature commitment.               | [Paper: Self-Refine: Iterative Refinement with Self-Feedback](https://arxiv.org/abs/2303.17651)<br>[Paper: Tree of Thoughts](https://arxiv.org/abs/2305.10601)                                                                                                                  |
 | AT TASK COMPLETION: write agent_<topic>_memory.md.                                                            | Episodic memory write-back: compress the run into a retrievable case for future generations.                | [Paper: ExpeL: LLM Agents Are Experiential Learners](https://arxiv.org/abs/2308.10144)<br>[Wiki: Episodic memory](https://en.wikipedia.org/wiki/Episodic_memory)                                                                                                                |
+| UPDATE CURRENT MEMORY: merge still-relevant lessons into CURRENT_MEMORY.md.                                   | Memory curation: promote short-horizon lessons into a compact active summary for future runs.               | [Wiki: Working memory](https://en.wikipedia.org/wiki/Working_memory)<br>[Wiki: Knowledge management](https://en.wikipedia.org/wiki/Knowledge_management)                                                                                                                         |
 | WRITE SKILLS: distill a reliable technique into skill_<topic>.md (≤30 lines).                                 | Skill distillation: promote repeatable patterns from episodic cases into persistent procedural knowledge.   | [Wiki: Procedural knowledge](https://en.wikipedia.org/wiki/Procedural_knowledge)<br>[Paper: Voyager (skill library for open-ended agents)](https://arxiv.org/abs/2305.16291)                                                                                                    |
 | SELECTION: keep candidates (git commit patches) with better results.                                          | Selection pressure: keep only the strictly better candidate; reset otherwise.                               | [Wiki: Selection (evolutionary algorithm)](https://en.wikipedia.org/wiki/Selection_(evolutionary_algorithm))<br>[Wiki: Hill climbing](https://en.wikipedia.org/wiki/Hill_climbing)                                                                                              |
 | CONSTRAINTS: work only inside this repo; never scan outside it.                                               | Feasible region and hard constraints: defines the boundary within which all solutions must remain valid.    | [Wiki: Feasible region](https://en.wikipedia.org/wiki/Feasible_region)<br>[Wiki: Constraint satisfaction problem](https://en.wikipedia.org/wiki/Constraint_satisfaction_problem)                                                                                                |
 
-Taken together, the PLAN is a compact search loop with layered memory: define the problem and objective, retrieve prior episodes and skills, avoid known dead ends, spend most effort on local refinement with a small mutation budget, force one critique pass, write back a compressed case and any distilled skills, then keep only candidates that clear the acceptance bar and satisfy hard constraints.
+Taken together, the PLAN is a compact search loop with layered memory: define the problem and objective, load active memory first, retrieve relevant prior episodes and skills, avoid known dead ends, spend most effort on local refinement with a small mutation budget, force one critique pass, write back a compressed case, update the current summary, distill durable skills, then keep only candidates that clear the acceptance bar and satisfy hard constraints.
+
+## Tiered Memory
+
+PSP works best with a tiered memory model: keep the full timestamped timeline, but promote only the parts that deserve broader reuse.
+
+| Tier | Artifact | When to write or update | Retention | Reuse scope | Memory type |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `agent_<timestamp>_<topic>_memory.md` | Write after each successful run to preserve the detailed episode. | Long | Narrow, run-specific | Episodic |
+| 2 | `CURRENT_MEMORY.md` | Update when a lesson is likely to help the next few runs in this repo. | Medium | Repo-wide, near-term | Active |
+| 3 | `skill_<topic>.md` | Create or update when a lesson becomes a reusable technique, not just a one-off observation. | Long | Broad, many future agents | Procedural |
+| 4 | `FAILED_PATHS.md` | Append when a failure pattern is clear enough that future runs should avoid repeating it. | Medium to long | Repo-wide avoidance | Negative |
+| Promotion rule | All tiers | Never promote memory automatically; promotion should always require judgment. | Always | Applies to every tier | Governance |
 
 
 ## Tips
@@ -198,9 +215,11 @@ Taken together, the PLAN is a compact search loop with layered memory: define th
 
 **Dead ends (`FAILED_PATHS.md`).** The plan instructs agents to read `FAILED_PATHS.md` before designing and to append any abandoned approach with a one-line reason. This prevents the same dead-end being re-tried in generation 7 that already failed in generation 2. The file is plain text, human-editable, and rescued alongside skill and memory files in conflict scenarios.
 
+**Current memory (`CURRENT_MEMORY.md`).** Use this as the compact front door for repo-specific lessons that should help the next few generations. Keep it short and curated. Timestamped `agent_*.md` files remain the detailed timeline; `CURRENT_MEMORY.md` is the active summary layer that future runs should read first.
+
 **Skills (`skill_*.md`).** When an agent discovers a reusable technique, the plan instructs it to write a `skill_<topic>.md` file (one skill per file, ≤30 lines). Future generations read all `skill_*.md` files at the start of each run via `APPLY SKILLS` and build on accumulated know-how rather than re-deriving it. Skills are tracked in git like any other file. In `-jN` mode, skill files are rescued alongside `agent_*.md` memory files even when code conflicts prevent a full merge.
 
-**Population (`-jN`).** Runs N agents in parallel per generation. Each member gets its own git worktree and branch so agents never race. After all members finish, their work is automatically merged back into the main branch using a three-tier cascade: (1) octopus merge when all branches are conflict-free, (2) sequential per-branch merge otherwise, (3) `-X ours` fallback for stubborn conflicts. `agent_*.md` memory files are always rescued and committed even when code conflicts prevent a full merge. Branches that produced no commits are dropped silently.
+**Population (`-jN`).** Runs N agents in parallel per generation. Each member gets its own git worktree and branch so agents never race. After all members finish, their work is automatically merged back into the main branch using a three-tier cascade: (1) octopus merge when all branches are conflict-free, (2) sequential per-branch merge otherwise, (3) `-X ours` fallback for stubborn conflicts. Knowledge artifacts such as `agent_*.md`, `CURRENT_MEMORY.md`, `skill_*.md`, and `FAILED_PATHS.md` are always rescued and committed even when code conflicts prevent a full merge. Branches that produced no commits are dropped silently.
 
 ## Inspiration
 
