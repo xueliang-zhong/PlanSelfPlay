@@ -28,23 +28,27 @@ Requirements: `bash`, at least one of `codex` / `claude` / `opencode` on
 If you want proof before theory, start here:
 
 ```bash
-# 1. preview: print the resolved command without running anything
+# Preview the resolved command without running anything
 ./planselfplay.sh --dry-run
 
-# 2. zero-config: no plan file needed, just describe the goal
+# Run the built-in plan template with a custom goal
 ./planselfplay.sh --goal "reduce lines of code"
-./planselfplay.sh --goal "maximise function-level test coverage"
-./planselfplay.sh --goal "eliminate duplicate logic"
+./planselfplay.sh -g "maximise function-level test coverage"
 
-# 3. create your own plan with your own customization
+# Create your own starter plan file
 ./planselfplay.sh --init-plan plan.txt
-./planselfplay.sh --plan plan.txt --generations 6
 
-# 4. scale up: 3 parallel agents per generation (burns 3x tokens)
+# Run your own plan for 6 generations
+./planselfplay.sh --plan plan.txt --generations 6
+./planselfplay.sh -p plan.txt -G 6
+
+# Run 3 agents per generation
 ./planselfplay.sh --plan plan.txt --generations 6 -j3
 
-# 5. swap the agent
-./planselfplay.sh --agent claude --plan plan.txt --generations 6
+# Run the same plan with Claude
+./planselfplay.sh -a claude -p plan.txt -G 6
+
+# Run the same plan with opencode
 ./planselfplay.sh --agent opencode --plan plan.txt --generations 6
 ```
 

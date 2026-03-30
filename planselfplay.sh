@@ -46,19 +46,19 @@ Usage: ${0##*/} [options] [plan-path]
 Replay a pure-text PLAN through a coding agent (codex, claude, or opencode).
 
 Options:
-  --agent codex|claude|opencode  Coding agent to use (default: codex)
-  --plan PATH                    Plan file to replay
-  --init-plan [PATH]             Write a starter plan file and exit (default: PLAN.example.txt)
-  --yolo                         Use the unsafe permission-bypass preset for the selected agent
-  --goal TEXT                    Replace the GOAL: line in the plan with this text
-  --generations N                Positive integer
-  --population N, -jN            Parallel agents per generation (default: 1)
-  --sleep SECONDS                Non-negative delay between generations
-  --stdout discard|inherit       Agent stdout handling
-  --agent-bin PATH               Agent executable override
-  --agent-args STRING            Full agent args override (replaces preset defaults)
-  --dry-run                      Print the resolved command and exit
-  -h, --help                     Show this help text
+  --agent codex|claude|opencode, -a  Coding agent to use (default: codex)
+  --plan PATH, -p                    Plan file to replay
+  --init-plan [PATH], -i             Write a starter plan file and exit (default: PLAN.example.txt)
+  --yolo                             Use the unsafe permission-bypass preset for the selected agent
+  --goal TEXT, -g                    Replace the GOAL: line in the plan with this text
+  --generations N, -G                Positive integer (default: 10)
+  --population N, -jN                Parallel agents per generation (default: 1)
+  --sleep SECONDS, -s                Non-negative delay between generations
+  --stdout discard|inherit, -o       Agent stdout handling
+  --agent-bin PATH                   Agent executable override
+  --agent-args STRING, -x            Full agent args override (replaces preset defaults)
+  --dry-run                          Print the resolved command and exit
+  -h, --help                         Show this help text
 
 Agent presets (overridable via --agent-args):
   codex     -> codex --full-auto exec -
@@ -98,9 +98,9 @@ while (( $# )); do
   case "$1" in
     -h|--help)    usage; exit 0 ;;
     --dry-run)    dry_run=1 ;;
-    --agent)      agent="$(arg "$@")"; shift ;;
-    --plan)       set_plan "$(arg "$@")"; shift ;;
-    --init-plan)
+    -a|--agent)      agent="$(arg "$@")"; shift ;;
+    -p|--plan)       set_plan "$(arg "$@")"; shift ;;
+    -i|--init-plan)
       if [[ $# -ge 2 && "${2:-}" != -* ]]; then
         init_plan_path="$2"
         shift
@@ -109,15 +109,15 @@ while (( $# )); do
       fi
       ;;
     --yolo)       yolo_mode=1 ;;
-    --goal)       goal_text="$(arg "$@")"; shift ;;
-    --generations) generations="$(arg "$@")"; shift ;;
+    -g|--goal)       goal_text="$(arg "$@")"; shift ;;
+    -G|--generations) generations="$(arg "$@")"; shift ;;
     --population)  population="$(arg "$@")"; shift ;;
     -j)            population="$(arg "$@")"; shift ;;
     -j*)           population="${1#-j}" ;;
-    --sleep)      sleep_seconds="$(arg "$@")"; shift ;;
-    --stdout)     stdout_mode="$(arg "$@")"; shift ;;
+    -s|--sleep)      sleep_seconds="$(arg "$@")"; shift ;;
+    -o|--stdout)     stdout_mode="$(arg "$@")"; shift ;;
     --agent-bin|--codex-bin)  agent_bin="$(arg "$@")"; shift ;;
-    --agent-args|--codex-args) agent_args_text="$(arg "$@")"; shift ;;
+    -x|--agent-args|--codex-args) agent_args_text="$(arg "$@")"; shift ;;
     --) shift; (( $# )) || quit "Missing plan path after --"; set_plan "$1" ;;
     -*) usage >&2; quit "Unknown option: $1" ;;
     *) set_plan "$1" ;;
