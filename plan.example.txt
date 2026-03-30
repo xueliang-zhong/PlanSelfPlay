@@ -1,6 +1,6 @@
 DOMAIN: the current working directory and its contents.
 
-GOAL: Minimise total lines of code (LOC) across the repository, while every feature avaialbe before the run MUST still work after it
+GOAL: Minimise total lines of code (LOC) across the repository, while every feature available before the run MUST still work after it.
 
 LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything so you extend the existing trajectory instead of restarting it.
 
