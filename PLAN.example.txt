@@ -1,7 +1,6 @@
 DOMAIN: this repository demonstrates pure-text agent self-play: one PLAN file, one shell loop, ordinary diffs, and minimal hidden state.
 
-GOAL:
-- Minimise total lines of code (LOC) across the repository, while every feature avaialbe before the run MUST still work after it
+GOAL: Minimise total lines of code (LOC) across the repository, while every feature avaialbe before the run MUST still work after it
 
 LEARN FROM PREVIOUS RUNS: read any local codex_*.md notes before changing anything so you extend the existing trajectory instead of restarting it.
 
