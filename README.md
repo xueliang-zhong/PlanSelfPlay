@@ -182,27 +182,27 @@ PSP works best with a tiered memory model: keep the full timestamped timeline, b
 
 ### Running
 
-**Start small.** Use `--generations 2` for a first run to check that the agent reads the plan and produces sensible output before committing to a long loop.
+**🔹 Start small.** Use `--generations 2` for a first run to check that the agent reads the plan and produces sensible output before committing to a long loop.
 
-**Watch live output.** Add `--stdout inherit` to print agent output directly to the terminal instead of discarding it, useful when debugging a new plan.
+**👀 Watch live output.** Add `--stdout inherit` to print agent output directly to the terminal instead of discarding it, useful when debugging a new plan.
 
-**Inspect the effective plan.** When using `--goal`, the script writes a `plan.tmp.<id>` file (built-in template) or `<plan>.tmp.<id>` file (explicit plan) in the repo for the duration of the run. Open it to confirm the `GOAL:` line and the full policy before the first generation finishes.
+**🔎 Inspect the effective plan.** When using `--goal`, the script writes a `plan.tmp.<id>` file (built-in template) or `<plan>.tmp.<id>` file (explicit plan) in the repo for the duration of the run. Open it to confirm the `GOAL:` line and the full policy before the first generation finishes.
 
-**Preview without running.** `--dry-run` prints the resolved agent command and exits, useful for checking `--agent-bin` / `--agent-args` overrides without invoking the agent.
+**🧪 Preview without running.** `--dry-run` prints the resolved agent command and exits, useful for checking `--agent-bin` / `--agent-args` overrides without invoking the agent.
 
-**Use `--goal` for targeted experiments.** Keep one canonical `plan.txt` and vary the objective at the command line. Each run gets its own uniquely named temp file so parallel or sequential experiments stay traceable.
+**🎯 Use `--goal` for targeted experiments.** Keep one canonical `plan.txt` and vary the objective at the command line. Each run gets its own uniquely named temp file so parallel or sequential experiments stay traceable.
 
-**Edit the plan on the fly.** You can often revise `plan.txt` mid-run and let the next generation pick up the new instructions automatically. Because the script invokes the agent once per generation, changes take effect at the next generation boundary without restarting the whole loop. In practice, this feels a bit like steering an active Codex session, but through the plan file.
+**✍️ Edit the plan on the fly.** You can often revise `plan.txt` mid-run and let the next generation pick up the new instructions automatically. Because the script invokes the agent once per generation, changes take effect at the next generation boundary without restarting the whole loop. In practice, this feels a bit like steering an active Codex session, but through the plan file.
 
-**Time budget (`--time-budget`).** Caps the total wall-clock run time. The loop exits cleanly before starting a generation that would exceed the budget, so runs are always comparable and predictable. Useful for overnight experiments or CI pipelines with a hard time limit:
+**⏱️ Time budget (`--time-budget`).** Caps the total wall-clock run time. The loop exits cleanly before starting a generation that would exceed the budget, so runs are always comparable and predictable. Useful for overnight experiments or CI pipelines with a hard time limit:
 
 ```bash
 ./planselfplay.sh --goal "reduce lines of code" --time-budget 3600   # stop after 1 hour
 ```
 
-**Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement. With `-jN`, each generation multiplies token spend by N, so start with `-j2` before going wider.
+**💸 Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement. With `-jN`, each generation multiplies token spend by N, so start with `-j2` before going wider.
 
-**Unblocking agents (use with caution).** When system restrictions or access controls prevent the agent from proceeding, `--yolo` selects the unsafe preset for supported agents:
+**⚠️ Unblocking agents (use with caution).** When system restrictions or access controls prevent the agent from proceeding, `--yolo` selects the unsafe preset for supported agents:
 
 ```bash
 # codex: bypass system restrictions and access controls
@@ -219,15 +219,15 @@ PSP works best with a tiered memory model: keep the full timestamped timeline, b
 
 ### Memory
 
-**Dead ends (`FAILED_PATHS.md`).** The plan instructs agents to read `FAILED_PATHS.md` before designing and to append any abandoned approach with a one-line reason. This prevents the same dead-end being re-tried in generation 7 that already failed in generation 2. The file is plain text, human-editable, and rescued alongside skill and memory files in conflict scenarios.
+**🧱 Dead ends (`FAILED_PATHS.md`).** The plan instructs agents to read `FAILED_PATHS.md` before designing and to append any abandoned approach with a one-line reason. This prevents the same dead-end being re-tried in generation 7 that already failed in generation 2. The file is plain text, human-editable, and rescued alongside skill and memory files in conflict scenarios.
 
-**Current memory (`CURRENT_MEMORY.md`).** Use this as the compact front door for repo-specific lessons that should help the next few generations. Keep it short and curated. Timestamped `agent_*.md` files remain the detailed timeline; `CURRENT_MEMORY.md` is the active summary layer that future runs should read first.
+**🧠 Current memory (`CURRENT_MEMORY.md`).** Use this as the compact front door for repo-specific lessons that should help the next few generations. Keep it short and curated. Timestamped `agent_*.md` files remain the detailed timeline; `CURRENT_MEMORY.md` is the active summary layer that future runs should read first.
 
-**Skills (`skill_*.md`).** When an agent discovers a reusable technique, the plan instructs it to write a `skill_<topic>.md` file (one skill per file, ≤30 lines). Future generations read all `skill_*.md` files at the start of each run via `APPLY SKILLS` and build on accumulated know-how rather than re-deriving it. Skills are tracked in git like any other file. In `-jN` mode, skill files are rescued alongside `agent_*.md` memory files even when code conflicts prevent a full merge.
+**🛠️ Skills (`skill_*.md`).** When an agent discovers a reusable technique, the plan instructs it to write a `skill_<topic>.md` file (one skill per file, ≤30 lines). Future generations read all `skill_*.md` files at the start of each run via `APPLY SKILLS` and build on accumulated know-how rather than re-deriving it. Skills are tracked in git like any other file. In `-jN` mode, skill files are rescued alongside `agent_*.md` memory files even when code conflicts prevent a full merge.
 
 ### Parallelism
 
-**Population (`-jN`).** Runs N agents in parallel per generation. Each member gets its own git worktree and branch so agents never race. After all members finish, their work is automatically merged back into the main branch using a three-tier cascade: (1) octopus merge when all branches are conflict-free, (2) sequential per-branch merge otherwise, (3) `-X ours` fallback for stubborn conflicts. Knowledge artifacts such as `agent_*.md`, `CURRENT_MEMORY.md`, `skill_*.md`, and `FAILED_PATHS.md` are always rescued and committed even when code conflicts prevent a full merge. Branches that produced no commits are dropped silently.
+**⚡ Population (`-jN`).** Runs N agents in parallel per generation. Each member gets its own git worktree and branch so agents never race. After all members finish, their work is automatically merged back into the main branch using a three-tier cascade: (1) octopus merge when all branches are conflict-free, (2) sequential per-branch merge otherwise, (3) `-X ours` fallback for stubborn conflicts. Knowledge artifacts such as `agent_*.md`, `CURRENT_MEMORY.md`, `skill_*.md`, and `FAILED_PATHS.md` are always rescued and committed even when code conflicts prevent a full merge. Branches that produced no commits are dropped silently.
 
 ## Inspiration
 
