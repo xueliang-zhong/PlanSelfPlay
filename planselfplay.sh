@@ -12,6 +12,7 @@ sleep_seconds="${SLEEP_SECONDS:-2}"
 stdout_mode="${STDOUT_MODE:-discard}"
 dry_run="${DRY_RUN:-0}"
 plan_seen=0
+init_plan_path=""
 
 quit() { printf '%s\n' "$*" >&2; exit 1; }
 arg() { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
@@ -24,6 +25,7 @@ Replay a pure-text PLAN through a coding agent (codex, claude, or opencode).
 Options:
   --agent codex|claude|opencode  Coding agent to use (default: codex)
   --plan PATH                    Plan file to replay
+  --init-plan [PATH]             Write a starter plan file and exit (default: PLAN.example.txt)
   --goal TEXT                    Replace the GOAL: line in the plan with this text
   --generations N                Positive integer
   --population N, -jN            Parallel agents per generation (default: 1)
@@ -74,6 +76,14 @@ while (( $# )); do
     --dry-run)    dry_run=1 ;;
     --agent)      agent="$(arg "$@")"; shift ;;
     --plan)       set_plan "$(arg "$@")"; shift ;;
+    --init-plan)
+      if [[ $# -ge 2 && "${2:-}" != -* ]]; then
+        init_plan_path="$2"
+        shift
+      else
+        init_plan_path="PLAN.example.txt"
+      fi
+      ;;
     --goal)       goal_text="$(arg "$@")"; shift ;;
     --generations) generations="$(arg "$@")"; shift ;;
     --population)  population="$(arg "$@")"; shift ;;
@@ -89,6 +99,15 @@ while (( $# )); do
   esac
   shift
 done
+
+if [[ -n "$init_plan_path" ]]; then
+  if [[ -e "$init_plan_path" ]]; then
+    quit "Refusing to overwrite existing file: $init_plan_path"
+  fi
+  builtin_plan_template "describe the improvement you want here" > "$init_plan_path"
+  printf 'Wrote starter plan to %s\n' "$init_plan_path"
+  exit 0
+fi
 
 # Apply agent presets (explicit --agent-bin / --agent-args flags take precedence)
 case "$agent" in

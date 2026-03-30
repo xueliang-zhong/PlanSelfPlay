@@ -1,8 +1,8 @@
-DOMAIN: this repository demonstrates pure-text agent self-play: one PLAN file, one shell loop, ordinary diffs, and minimal hidden state.
+DOMAIN: the current working directory and its contents.
 
 GOAL: Minimise total lines of code (LOC) across the repository, while every feature avaialbe before the run MUST still work after it
 
-LEARN FROM PREVIOUS RUNS: read any local codex_*.md notes before changing anything so you extend the existing trajectory instead of restarting it.
+LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything so you extend the existing trajectory instead of restarting it.
 
 STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
 
@@ -14,4 +14,4 @@ SELECTION:
 - if the result is clearly better, create a local git commit whose message says what changed and what improved
 - otherwise, `git reset` the repo to its pre-task state
 
-CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; treat protected control files (such as this PLAN file) as fixed unless the goal explicitly puts them in scope.
+CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; treat protected control files (such as PLAN files) as fixed unless the goal explicitly puts them in scope.

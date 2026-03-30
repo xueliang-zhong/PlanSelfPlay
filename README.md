@@ -36,8 +36,8 @@ If you want proof before theory, start here:
 ./planselfplay.sh --goal "maximise function-level test coverage"
 ./planselfplay.sh --goal "eliminate duplicate logic"
 
-# 3. bring your own plan
-cp PLAN.example.txt plan.txt
+# 3. create your own plan
+./planselfplay.sh --init-plan plan.txt
 # edit plan.txt, then:
 ./planselfplay.sh --plan plan.txt --generations 6
 
