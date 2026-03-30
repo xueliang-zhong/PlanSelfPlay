@@ -82,6 +82,8 @@ LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anythi
 
 APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply relevant ones to your approach.
 
+DEAD ENDS: before designing, read FAILED_PATHS.md if it exists and never re-try any listed approach. When you abandon an approach, append it to FAILED_PATHS.md with a one-line reason.
+
 STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
 
 RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then improve the design based on rethink.
@@ -299,10 +301,10 @@ for ((generation=1; generation<=generations; generation++)); do
             while IFS= read -r f; do
               [[ -z "$f" ]] && continue
               git show "${wt_branch}:${f}" > "${repo_root}/${f}" 2>/dev/null || true
-            done < <(git diff --name-only HEAD "${wt_branch}" -- 'agent_*.md' 'skill_*.md' 2>/dev/null)
-            git add -- 'agent_*.md' 'skill_*.md' 2>/dev/null || true
+            done < <(git diff --name-only HEAD "${wt_branch}" -- 'agent_*.md' 'skill_*.md' 'FAILED_PATHS.md' 2>/dev/null)
+            git add -- 'agent_*.md' 'skill_*.md' 'FAILED_PATHS.md' 2>/dev/null || true
             git diff --cached --quiet \
-              || git commit -m "psp: rescue memory+skills from gen${generation}-m${member_num} (conflict)"
+              || git commit -m "psp: rescue knowledge artifacts from gen${generation}-m${member_num} (conflict)"
           fi
         fi
       done
