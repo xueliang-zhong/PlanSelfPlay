@@ -2,6 +2,7 @@
 set -euo pipefail
 agent="${AGENT:-codex}"
 plan_path="${PLAN_PATH:-${PWD}/PLAN.example.txt}"
+plan_explicit=0; [[ -n "${PLAN_PATH:-}" ]] && plan_explicit=1
 agent_bin=""
 agent_args_text=""
 goal_text="${GOAL:-}"
@@ -14,7 +15,7 @@ plan_seen=0
 
 quit() { printf '%s\n' "$*" >&2; exit 1; }
 arg() { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
-set_plan() { (( plan_seen == 0 )) || quit "Provide the plan path once"; plan_seen=1; plan_path="$1"; }
+set_plan() { (( plan_seen == 0 )) || quit "Provide the plan path once"; plan_seen=1; plan_explicit=1; plan_path="$1"; }
 usage() {
   cat <<EOF
 Usage: ${0##*/} [options] [plan-path]
@@ -41,6 +42,30 @@ Agent presets (overridable via --agent-args):
 Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS POPULATION SLEEP_SECONDS STDOUT_MODE DRY_RUN
              (legacy: CODEX_BIN CODEX_ARGS map to AGENT_BIN AGENT_ARGS for codex)
 EOF
+}
+
+# Built-in ML-style plan template; used by --goal when no --plan is given.
+# Update this function to change the default agent policy.
+builtin_plan_template() {
+  cat <<PLAN_TEMPLATE
+DOMAIN: the current working directory and its contents.
+
+GOAL: $1
+
+LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything so you extend the existing trajectory instead of restarting it.
+
+STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
+
+RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then improve the design based on rethink.
+
+AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
+
+SELECTION:
+- if the result is clearly better, create a local git commit whose message says what changed and what improved
+- otherwise, \`git reset\` the repo to its pre-task state
+
+CONSTRAINTS: work only inside this repo; never scan outside it; wrap every \`find\`, \`rg\`, or \`grep\` with \`timeout\` no longer than 10 minutes; prefer reversible edits; treat protected control files (such as PLAN files) as fixed unless the goal explicitly puts them in scope.
+PLAN_TEMPLATE
 }
 
 while (( $# )); do
@@ -82,7 +107,10 @@ case "$agent" in
   *) quit "Unknown agent: $agent. Valid values: codex, claude, opencode" ;;
 esac
 
-[[ -n "$plan_path" && -r "$plan_path" ]] || quit "Plan file is not readable: $plan_path"
+# Skip plan-file validation when --goal supplies the goal and no explicit --plan was given
+if [[ -z "$goal_text" || "$plan_explicit" == 1 ]]; then
+  [[ -n "$plan_path" && -r "$plan_path" ]] || quit "Plan file is not readable: $plan_path"
+fi
 [[ "$generations" =~ ^[1-9][0-9]*$ ]] || quit "GENERATIONS must be a positive integer: $generations"
 [[ "$population" =~ ^[1-9][0-9]*$ ]] || quit "POPULATION must be a positive integer: $population"
 [[ "$sleep_seconds" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]] || quit "SLEEP_SECONDS must be a non-negative number: $sleep_seconds"
@@ -94,10 +122,15 @@ agent_args=()
 [[ -n "$agent_args_text" ]] && read -r -a agent_args <<< "$agent_args_text"
 agent_command=("$agent_bin" "${agent_args[@]}")
 
+plan_display="$plan_path"
+[[ -n "$goal_text" && "$plan_explicit" == 0 ]] && plan_display="(builtin)"
 printf 'PLANSELFPLAY CONFIG | agent=%s | plan=%s | goal=%s | generations=%s | population=%s | sleep=%s | stdout=%s | bin=%s | args=%s\n' \
-  "$agent" "$plan_path" "${goal_text:-(none)}" "$generations" "$population" "$sleep_seconds" "$stdout_mode" "$agent_bin" "$agent_args_text"
+  "$agent" "$plan_display" "${goal_text:-(none)}" "$generations" "$population" "$sleep_seconds" "$stdout_mode" "$agent_bin" "$agent_args_text"
 if [[ "$dry_run" == 1 ]]; then
-  printf 'PLANSELFPLAY DRY RUN |'; printf ' %q' "${agent_command[@]}"; printf ' < %q\n' "$plan_path"; exit 0
+  printf 'PLANSELFPLAY DRY RUN |'; printf ' %q' "${agent_command[@]}"
+  [[ "$plan_display" == "(builtin)" ]] && printf ' < <(builtin_plan_template %q)\n' "$goal_text" \
+    || printf ' < %q\n' "$plan_path"
+  exit 0
 fi
 
 command -v "$agent_bin" >/dev/null 2>&1 || quit "Required command not found on PATH: $agent_bin"
@@ -107,7 +140,13 @@ command -v "$agent_bin" >/dev/null 2>&1 || quit "Required command not found on P
 
 tmp_plan=""
 effective_plan="$plan_path"
-if [[ -n "$goal_text" ]]; then
+if [[ -n "$goal_text" && "$plan_explicit" == 0 ]]; then
+  # No explicit plan: generate from the built-in ML-style template
+  tmp_plan=$(mktemp "${PWD}/plan.tmp.XXXXXX")
+  builtin_plan_template "$goal_text" > "$tmp_plan"
+  effective_plan="$tmp_plan"
+elif [[ -n "$goal_text" ]]; then
+  # Explicit plan: substitute the GOAL: line
   tmp_plan=$(mktemp "${PWD}/$(basename "${plan_path%.*}").tmp.XXXXXX")
   awk -v goal="$goal_text" '/^GOAL:/{print "GOAL: " goal; next} {print}' "$plan_path" > "$tmp_plan"
   effective_plan="$tmp_plan"

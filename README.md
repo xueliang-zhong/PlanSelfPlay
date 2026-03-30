@@ -161,7 +161,7 @@ constraints.
 
 **Watch live output.** Add `--stdout inherit` to print agent output directly to the terminal instead of discarding it, useful when debugging a new plan.
 
-**Inspect the effective plan.** When using `--goal`, the script writes a `<plan>.tmp.<id>` file in the repo for the duration of the run. Open it to confirm the `GOAL:` line was substituted as expected before the first generation finishes.
+**Inspect the effective plan.** When using `--goal`, the script writes a `plan.tmp.<id>` file (built-in template) or `<plan>.tmp.<id>` file (explicit plan) in the repo for the duration of the run. Open it to confirm the `GOAL:` line and the full policy before the first generation finishes.
 
 **Preview without running.** `--dry-run` prints the resolved agent command and exits, useful for checking `--agent-bin` / `--agent-args` overrides without invoking the agent.
 
