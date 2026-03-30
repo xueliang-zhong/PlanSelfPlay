@@ -40,13 +40,13 @@ If you want proof before theory, start here:
 
 # Run your own plan for 6 generations
 ./planselfplay.sh --plan plan.txt --generations 6
-./planselfplay.sh -p plan.txt -g 6
+./planselfplay.sh -p plan.txt -g6
 
 # Run 3 agents per generation
-./planselfplay.sh --plan plan.txt --generations 6 -j3
+./planselfplay.sh --plan plan.txt -g6 -j3
 
 # Run the same plan with Claude
-./planselfplay.sh -a claude -p plan.txt -g 6
+./planselfplay.sh -a claude -p plan.txt -g6
 
 # Run the same plan with opencode
 ./planselfplay.sh --agent opencode --plan plan.txt --generations 6

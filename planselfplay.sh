@@ -111,6 +111,7 @@ while (( $# )); do
     --yolo)       yolo_mode=1 ;;
     -G|--goal)       goal_text="$(arg "$@")"; shift ;;
     -g|--generations) generations="$(arg "$@")"; shift ;;
+    -g*)           generations="${1#-g}" ;;
     --population)  population="$(arg "$@")"; shift ;;
     -j)            population="$(arg "$@")"; shift ;;
     -j*)           population="${1#-j}" ;;
