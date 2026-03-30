@@ -41,6 +41,9 @@ cp PLAN.example.txt plan.txt
 ./planselfplay.sh --agent claude --plan plan.txt --generations 6
 ./planselfplay.sh --agent opencode --plan plan.txt --generations 6
 
+# run 3 agents in parallel per generation
+./planselfplay.sh --plan plan.txt --generations 6 -j3
+
 # run without a plan file
 ./planselfplay.sh --goal "reduce LOC across the repo while preserving feature parity"
 ./planselfplay.sh --goal "maximise function-level test coverage"
