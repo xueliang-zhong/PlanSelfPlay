@@ -165,7 +165,7 @@ constraints.
 
 **Use `--goal` for targeted experiments.** Keep one canonical `plan.txt` and vary the objective at the command line. Each run gets its own uniquely named temp file so parallel or sequential experiments stay traceable.
 
-**Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement.
+**Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement. With `-jN`, each generation multiplies token spend by N — start with `-j2` before going wider.
 
 **Population (`-jN`).** Runs N agents in parallel per generation. Safe for read-only or fully isolated workloads. For agents that write to the repo, parallel members will race on the same working tree — git worktree isolation (one branch per member) is the fix and is planned.
 
