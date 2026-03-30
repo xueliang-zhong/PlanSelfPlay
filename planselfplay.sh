@@ -143,32 +143,64 @@ for ((generation=1; generation<=generations; generation++)); do
     for ((member=1; member<=population; member++)); do
       git worktree remove --force "${repo_root}/.psp/gen${generation}-m${member}" 2>/dev/null || true
     done
-    # Merge each member's work back into main
+    # Collect branches that produced new commits
+    active_branches=()
     for ((member=1; member<=population; member++)); do
       wt_branch="psp/gen${generation}-m${member}"
       new_commits=$(git rev-list HEAD.."${wt_branch}" --count 2>/dev/null || echo 0)
-      if (( new_commits == 0 )); then
+      if (( new_commits > 0 )); then
+        active_branches+=("$wt_branch")
+      else
         printf 'PLANSELFPLAY %d/%d [%d/%d] | no new commits\n' \
           "$generation" "$generations" "$member" "$population"
         git branch -D "${wt_branch}" 2>/dev/null || true
-      elif git merge --no-ff --no-edit "${wt_branch}" >/dev/null 2>&1; then
-        printf 'PLANSELFPLAY %d/%d [%d/%d] | merged %d commit(s) into main\n' \
-          "$generation" "$generations" "$member" "$population" "$new_commits"
-        git branch -D "${wt_branch}" 2>/dev/null || true
-      else
-        git merge --abort 2>/dev/null || true
-        printf 'PLANSELFPLAY %d/%d [%d/%d] | conflict, rescuing memory files (branch kept: %s)\n' \
-          "$generation" "$generations" "$member" "$population" "${wt_branch}"
-        # Rescue agent_*.md files that would otherwise be lost
-        while IFS= read -r f; do
-          [[ -z "$f" ]] && continue
-          git show "${wt_branch}:${f}" > "${repo_root}/${f}" 2>/dev/null || true
-        done < <(git diff --name-only HEAD "${wt_branch}" -- 'agent_*.md' 2>/dev/null)
-        git add -- 'agent_*.md' 2>/dev/null || true
-        git diff --cached --quiet \
-          || git commit -m "psp: rescue memory from gen${generation}-m${member} (merge conflict)"
       fi
     done
+    if (( ${#active_branches[@]} == 0 )); then
+      printf 'PLANSELFPLAY %d/%d | no members produced commits\n' "$generation" "$generations"
+    elif (( ${#active_branches[@]} > 1 )) && \
+         git merge --no-ff --no-edit "${active_branches[@]}" >/dev/null 2>&1; then
+      # Tier 1: octopus merge — all branches, no conflicts
+      printf 'PLANSELFPLAY %d/%d | octopus: merged all %d active branches\n' \
+        "$generation" "$generations" "${#active_branches[@]}"
+      for wt_branch in "${active_branches[@]}"; do
+        git branch -D "${wt_branch}" 2>/dev/null || true
+      done
+    else
+      git merge --abort 2>/dev/null || true
+      # Tier 2: sequential per-branch merge, with -X ours fallback (Tier 3) on conflict
+      for wt_branch in "${active_branches[@]}"; do
+        member_num="${wt_branch##*-m}"
+        new_commits=$(git rev-list HEAD.."${wt_branch}" --count 2>/dev/null || echo 0)
+        if (( new_commits == 0 )); then
+          git branch -D "${wt_branch}" 2>/dev/null || true
+        elif git merge --no-ff --no-edit "${wt_branch}" >/dev/null 2>&1; then
+          printf 'PLANSELFPLAY %d/%d [%d/%d] | merged %d commit(s)\n' \
+            "$generation" "$generations" "$member_num" "$population" "$new_commits"
+          git branch -D "${wt_branch}" 2>/dev/null || true
+        else
+          git merge --abort 2>/dev/null || true
+          if git merge --no-ff --no-edit -X ours "${wt_branch}" >/dev/null 2>&1; then
+            # Tier 3: ours strategy — non-conflicting hunks taken, main wins conflicts
+            printf 'PLANSELFPLAY %d/%d [%d/%d] | partial merge (-X ours, %d commit(s))\n' \
+              "$generation" "$generations" "$member_num" "$population" "$new_commits"
+            git branch -D "${wt_branch}" 2>/dev/null || true
+          else
+            git merge --abort 2>/dev/null || true
+            # Last resort: rescue agent_*.md memory files
+            printf 'PLANSELFPLAY %d/%d [%d/%d] | conflict, rescuing memory (branch kept: %s)\n' \
+              "$generation" "$generations" "$member_num" "$population" "${wt_branch}"
+            while IFS= read -r f; do
+              [[ -z "$f" ]] && continue
+              git show "${wt_branch}:${f}" > "${repo_root}/${f}" 2>/dev/null || true
+            done < <(git diff --name-only HEAD "${wt_branch}" -- 'agent_*.md' 2>/dev/null)
+            git add -- 'agent_*.md' 2>/dev/null || true
+            git diff --cached --quiet \
+              || git commit -m "psp: rescue memory from gen${generation}-m${member_num} (conflict)"
+          fi
+        fi
+      done
+    fi
   fi
   if (( generation < generations )); then sleep "$sleep_seconds"; fi
 done

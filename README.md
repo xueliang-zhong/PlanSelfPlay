@@ -182,7 +182,7 @@ constraints.
 > [!WARNING]
 > These flags remove every guardrail. The agent will run destructive commands without asking. Useful for keeping long runs unblocked, but commit your work and use a throwaway branch first. There could be no undo.
 
-**Population (`-jN`).** Runs N agents in parallel per generation. Each member gets its own git worktree and branch so agents never race. After all members finish, their work is automatically merged back into main: clean merges land immediately, conflicts are skipped (branch kept for manual review), and `agent_*.md` memory files are always rescued and committed even when code conflicts prevent a full merge.
+**Population (`-jN`).** Runs N agents in parallel per generation. Each member gets its own git worktree and branch so agents never race. After all members finish, their work is automatically merged back into the main branch using a three-tier cascade: (1) octopus merge when all branches are conflict-free, (2) sequential per-branch merge otherwise, (3) `-X ours` fallback for stubborn conflicts. `agent_*.md` memory files are always rescued and committed even when code conflicts prevent a full merge. Branches that produced no commits are dropped silently.
 
 ## Inspiration
 
