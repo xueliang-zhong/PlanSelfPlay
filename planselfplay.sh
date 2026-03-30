@@ -139,11 +139,36 @@ for ((generation=1; generation<=generations; generation++)); do
   done
   for pid in "${pids[@]}"; do wait "$pid"; done
   if (( population > 1 )); then
+    # Remove worktree paths first so branches are free to merge
     for ((member=1; member<=population; member++)); do
       git worktree remove --force "${repo_root}/.psp/gen${generation}-m${member}" 2>/dev/null || true
     done
-    printf 'PLANSELFPLAY %d/%d | member branches available: psp/gen%d-m{1..%d}\n' \
-      "$generation" "$generations" "$generation" "$population"
+    # Merge each member's work back into main
+    for ((member=1; member<=population; member++)); do
+      wt_branch="psp/gen${generation}-m${member}"
+      new_commits=$(git rev-list HEAD.."${wt_branch}" --count 2>/dev/null || echo 0)
+      if (( new_commits == 0 )); then
+        printf 'PLANSELFPLAY %d/%d [%d/%d] | no new commits\n' \
+          "$generation" "$generations" "$member" "$population"
+        git branch -D "${wt_branch}" 2>/dev/null || true
+      elif git merge --no-ff --no-edit "${wt_branch}" >/dev/null 2>&1; then
+        printf 'PLANSELFPLAY %d/%d [%d/%d] | merged %d commit(s) into main\n' \
+          "$generation" "$generations" "$member" "$population" "$new_commits"
+        git branch -D "${wt_branch}" 2>/dev/null || true
+      else
+        git merge --abort 2>/dev/null || true
+        printf 'PLANSELFPLAY %d/%d [%d/%d] | conflict, rescuing memory files (branch kept: %s)\n' \
+          "$generation" "$generations" "$member" "$population" "${wt_branch}"
+        # Rescue agent_*.md files that would otherwise be lost
+        while IFS= read -r f; do
+          [[ -z "$f" ]] && continue
+          git show "${wt_branch}:${f}" > "${repo_root}/${f}" 2>/dev/null || true
+        done < <(git diff --name-only HEAD "${wt_branch}" -- 'agent_*.md' 2>/dev/null)
+        git add -- 'agent_*.md' 2>/dev/null || true
+        git diff --cached --quiet \
+          || git commit -m "psp: rescue memory from gen${generation}-m${member} (merge conflict)"
+      fi
+    done
   fi
   if (( generation < generations )); then sleep "$sleep_seconds"; fi
 done

@@ -182,7 +182,7 @@ constraints.
 > [!WARNING]
 > These flags remove every guardrail. The agent will run destructive commands without asking. Useful for keeping long runs unblocked, but commit your work and use a throwaway branch first. There could be no undo.
 
-**Population (`-jN`).** Runs N agents in parallel per generation. Git worktree isolation per member is enabled by default for `-jN` runs, so each agent works on its own branch without racing. After each generation, worktree paths are cleaned up and the member branches (`psp/gen{g}-m{1..N}`) are left for inspection and merging.
+**Population (`-jN`).** Runs N agents in parallel per generation. Each member gets its own git worktree and branch so agents never race. After all members finish, their work is automatically merged back into main: clean merges land immediately, conflicts are skipped (branch kept for manual review), and `agent_*.md` memory files are always rescued and committed even when code conflicts prevent a full merge.
 
 ## Inspiration
 
