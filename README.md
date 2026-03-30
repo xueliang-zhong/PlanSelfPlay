@@ -152,6 +152,21 @@ local search with some exploration, force one critique pass, write back a
 reusable case, and keep only candidates that satisfy the acceptance rule and
 constraints.
 
+
+## Tips
+
+**Start small.** Use `--generations 2` for a first run to check that the agent reads the plan and produces sensible output before committing to a long loop.
+
+**Watch live output.** Add `--stdout inherit` to print agent output directly to the terminal instead of discarding it — useful when debugging a new plan.
+
+**Inspect the effective plan.** When using `--goal`, the script writes a `<plan>.tmp.<id>` file in the repo for the duration of the run. Open it to confirm the `GOAL:` line was substituted as expected before the first generation finishes.
+
+**Preview without running.** `--dry-run` prints the resolved agent command and exits — useful for checking `--agent-bin` / `--agent-args` overrides without invoking the agent.
+
+**Use `--goal` for targeted experiments.** Keep one canonical `plan.txt` and vary the objective at the command line. Each run gets its own uniquely named temp file so parallel or sequential experiments stay traceable.
+
+**Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement.
+
 ## Inspiration
 
 This project is inspired by `karpathy/autoresearch`. The difference here is the
