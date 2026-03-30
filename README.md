@@ -36,9 +36,8 @@ If you want proof before theory, start here:
 ./planselfplay.sh --goal "maximise function-level test coverage"
 ./planselfplay.sh --goal "eliminate duplicate logic"
 
-# 3. create your own plan
+# 3. create your own plan with your own customization
 ./planselfplay.sh --init-plan plan.txt
-# edit plan.txt, then:
 ./planselfplay.sh --plan plan.txt --generations 6
 
 # 4. scale up: 3 parallel agents per generation (burns 3x tokens)
