@@ -101,21 +101,49 @@ if [[ "$dry_run" == 1 ]]; then
 fi
 
 command -v "$agent_bin" >/dev/null 2>&1 || quit "Required command not found on PATH: $agent_bin"
+
+# Resolve plan_path to absolute so agents running in worktrees can still read it
+[[ "$plan_path" = /* ]] || plan_path="${PWD}/${plan_path}"
+
+tmp_plan=""
 effective_plan="$plan_path"
 if [[ -n "$goal_text" ]]; then
   tmp_plan=$(mktemp "${PWD}/$(basename "${plan_path%.*}").tmp.XXXXXX")
-  trap 'rm -f "$tmp_plan"' EXIT
   awk -v goal="$goal_text" '/^GOAL:/{print "GOAL: " goal; next} {print}' "$plan_path" > "$tmp_plan"
   effective_plan="$tmp_plan"
 fi
+
+repo_root=""
+if (( population > 1 )); then
+  git rev-parse --git-dir >/dev/null 2>&1 \
+    || quit "POPULATION > 1 requires a git repository; use -j1 outside git repos"
+  repo_root=$(git rev-parse --show-toplevel)
+fi
+
+trap '[[ -n "$tmp_plan" ]] && rm -f "$tmp_plan"; [[ -n "$repo_root" ]] && { git worktree prune -q 2>/dev/null || true; rm -rf "${repo_root}/.psp"; }' EXIT
+
 for ((generation=1; generation<=generations; generation++)); do
   pids=()
   for ((member=1; member<=population; member++)); do
     printf 'PLANSELFPLAY %d/%d [%d/%d] | agent=%s | plan=%s | bin=%s | args=%s\n' \
       "$generation" "$generations" "$member" "$population" "$agent" "$plan_path" "$agent_bin" "$agent_args_text"
-    "${agent_command[@]}" < "$effective_plan" > "$stdout_target" &
+    if (( population > 1 )); then
+      wt_branch="psp/gen${generation}-m${member}"
+      wt_path="${repo_root}/.psp/gen${generation}-m${member}"
+      git worktree add -q -b "$wt_branch" "$wt_path" HEAD
+      (cd "$wt_path" && "${agent_command[@]}" < "$effective_plan" > "$stdout_target") &
+    else
+      "${agent_command[@]}" < "$effective_plan" > "$stdout_target" &
+    fi
     pids+=($!)
   done
   for pid in "${pids[@]}"; do wait "$pid"; done
+  if (( population > 1 )); then
+    for ((member=1; member<=population; member++)); do
+      git worktree remove --force "${repo_root}/.psp/gen${generation}-m${member}" 2>/dev/null || true
+    done
+    printf 'PLANSELFPLAY %d/%d | member branches available: psp/gen%d-m{1..%d}\n' \
+      "$generation" "$generations" "$generation" "$population"
+  fi
   if (( generation < generations )); then sleep "$sleep_seconds"; fi
 done

@@ -28,22 +28,23 @@ Requirements: `bash`, at least one of `codex` / `claude` / `opencode` on
 If you want proof before theory, start here:
 
 ```bash
-# preview the exact command without running it (defaults to codex)
+# 1. preview: print the resolved command without running anything
 ./planselfplay.sh --dry-run
 
-# quick run without a plan file
-./planselfplay.sh --goal "reduce LOC across the repo while preserving feature parity"
+# 2. zero-config: no plan file needed, just describe the goal
+./planselfplay.sh --goal "reduce lines of code"
 ./planselfplay.sh --goal "maximise function-level test coverage"
-./planselfplay.sh --goal "eliminate duplicate logic in this project"
+./planselfplay.sh --goal "eliminate duplicate logic"
 
-# run with a customized PLAN with codex (default)
+# 3. bring your own plan
 cp PLAN.example.txt plan.txt
+# edit plan.txt, then:
 ./planselfplay.sh --plan plan.txt --generations 6
 
-# run 3 agents in parallel per generation
+# 4. scale up: 3 parallel agents per generation (burns 3x tokens)
 ./planselfplay.sh --plan plan.txt --generations 6 -j3
 
-# run with other agents
+# 5. swap the agent
 ./planselfplay.sh --agent claude --plan plan.txt --generations 6
 ./planselfplay.sh --agent opencode --plan plan.txt --generations 6
 ```
@@ -158,17 +159,29 @@ constraints.
 
 **Start small.** Use `--generations 2` for a first run to check that the agent reads the plan and produces sensible output before committing to a long loop.
 
-**Watch live output.** Add `--stdout inherit` to print agent output directly to the terminal instead of discarding it — useful when debugging a new plan.
+**Watch live output.** Add `--stdout inherit` to print agent output directly to the terminal instead of discarding it, useful when debugging a new plan.
 
 **Inspect the effective plan.** When using `--goal`, the script writes a `<plan>.tmp.<id>` file in the repo for the duration of the run. Open it to confirm the `GOAL:` line was substituted as expected before the first generation finishes.
 
-**Preview without running.** `--dry-run` prints the resolved agent command and exits — useful for checking `--agent-bin` / `--agent-args` overrides without invoking the agent.
+**Preview without running.** `--dry-run` prints the resolved agent command and exits, useful for checking `--agent-bin` / `--agent-args` overrides without invoking the agent.
 
 **Use `--goal` for targeted experiments.** Keep one canonical `plan.txt` and vary the objective at the command line. Each run gets its own uniquely named temp file so parallel or sequential experiments stay traceable.
 
-**Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement. With `-jN`, each generation multiplies token spend by N — start with `-j2` before going wider.
+**Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement. With `-jN`, each generation multiplies token spend by N, so start with `-j2` before going wider.
 
-**Population (`-jN`).** Runs N agents in parallel per generation. Safe for read-only or fully isolated workloads. For agents that write to the repo, parallel members will race on the same working tree — git worktree isolation (one branch per member) is the fix and is planned.
+**Unblocking agents (use with caution).** When system restrictions or access controls prevent the agent from proceeding, permission flags can lift those barriers and keep the loop running unattended. Pass them via `--agent-args`:
+
+```bash
+# codex: bypass system restrictions and access controls
+./planselfplay.sh --agent-args "--full-auto --yolo exec -" --plan plan.txt
+
+# claude: bypass permission checks
+./planselfplay.sh --agent claude --agent-args "-p --dangerously-skip-permissions -" --plan plan.txt
+```
+
+**These flags remove every guardrail.** The agent will run destructive commands without asking. Useful for keeping long runs unblocked, but commit your work and use a throwaway branch first. There could be no undo.
+
+**Population (`-jN`).** Runs N agents in parallel per generation. Git worktree isolation per member is enabled by default for `-jN` runs, so each agent works on its own branch without racing. After each generation, worktree paths are cleaned up and the member branches (`psp/gen{g}-m{1..N}`) are left for inspection and merging.
 
 ## Inspiration
 
