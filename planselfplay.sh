@@ -273,7 +273,7 @@ for ((generation=1; generation<=generations; generation++)); do
   pids=()
   for ((member=1; member<=population; member++)); do
     printf 'PLANSELFPLAY %d/%d [%d/%d] | agent=%s | plan=%s | bin=%s | args=%s\n' \
-      "$generation" "$generations" "$member" "$population" "$agent" "$plan_path" "$agent_bin" "$agent_args_text"
+      "$generation" "$generations" "$member" "$population" "$agent" "$plan_display" "$agent_bin" "$agent_args_text"
     if (( population > 1 )); then
       wt_branch="psp/gen${generation}-m${member}"
       wt_path="${repo_root}/.psp/gen${generation}-m${member}"
