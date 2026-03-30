@@ -31,7 +31,7 @@ If you want proof before theory, start here:
 # preview the exact command without running it (defaults to codex)
 ./planselfplay.sh --dry-run
 
-# run without a plan file
+# quick run without a plan file
 ./planselfplay.sh --goal "reduce LOC across the repo while preserving feature parity"
 ./planselfplay.sh --goal "maximise function-level test coverage"
 ./planselfplay.sh --goal "eliminate duplicate logic in this project"
