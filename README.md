@@ -168,15 +168,17 @@ constraints.
 
 **Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement. With `-jN`, each generation multiplies token spend by N, so start with `-j2` before going wider.
 
-**Unblocking agents (use with caution).** When system restrictions or access controls prevent the agent from proceeding, permission flags can lift those barriers and keep the loop running unattended. Pass them via `--agent-args`:
+**Unblocking agents (use with caution).** When system restrictions or access controls prevent the agent from proceeding, `--yolo` selects the unsafe preset for supported agents:
 
 ```bash
 # codex: bypass system restrictions and access controls
-./planselfplay.sh --agent-args "--full-auto --yolo exec -" --plan plan.txt
+./planselfplay.sh --yolo --plan plan.txt
 
 # claude: bypass permission checks
-./planselfplay.sh --agent claude --agent-args "-p --dangerously-skip-permissions -" --plan plan.txt
+./planselfplay.sh --agent claude --yolo --plan plan.txt
 ```
+
+`opencode` currently ignores `--yolo` and prints a warning.
 
 > [!WARNING]
 > These flags remove every guardrail. The agent will run destructive commands without asking. Useful for keeping long runs unblocked, but commit your work and use a throwaway branch first. There could be no undo.

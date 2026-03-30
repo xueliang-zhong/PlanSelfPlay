@@ -13,6 +13,7 @@ stdout_mode="${STDOUT_MODE:-discard}"
 dry_run="${DRY_RUN:-0}"
 plan_seen=0
 init_plan_path=""
+yolo_mode=0
 
 quit() { printf '%s\n' "$*" >&2; exit 1; }
 arg() { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
@@ -48,6 +49,7 @@ Options:
   --agent codex|claude|opencode  Coding agent to use (default: codex)
   --plan PATH                    Plan file to replay
   --init-plan [PATH]             Write a starter plan file and exit (default: PLAN.example.txt)
+  --yolo                         Use the unsafe permission-bypass preset for the selected agent
   --goal TEXT                    Replace the GOAL: line in the plan with this text
   --generations N                Positive integer
   --population N, -jN            Parallel agents per generation (default: 1)
@@ -106,6 +108,7 @@ while (( $# )); do
         init_plan_path="PLAN.example.txt"
       fi
       ;;
+    --yolo)       yolo_mode=1 ;;
     --goal)       goal_text="$(arg "$@")"; shift ;;
     --generations) generations="$(arg "$@")"; shift ;;
     --population)  population="$(arg "$@")"; shift ;;
@@ -135,15 +138,32 @@ fi
 case "$agent" in
   codex)
     [[ -n "$agent_bin" ]]       || agent_bin="${AGENT_BIN:-${CODEX_BIN:-codex}}"
-    [[ -n "$agent_args_text" ]] || agent_args_text="${AGENT_ARGS:-${CODEX_ARGS:---full-auto exec -}}"
+    if [[ -z "$agent_args_text" ]]; then
+      if (( yolo_mode == 1 )); then
+        agent_args_text="--yolo exec -"
+      else
+        agent_args_text="${AGENT_ARGS:-${CODEX_ARGS:---full-auto exec -}}"
+      fi
+    fi
     ;;
   claude)
     [[ -n "$agent_bin" ]]       || agent_bin="${AGENT_BIN:-claude}"
-    [[ -n "$agent_args_text" ]] || agent_args_text="${AGENT_ARGS:--p -}"
+    if [[ -z "$agent_args_text" ]]; then
+      if (( yolo_mode == 1 )); then
+        agent_args_text="-p --dangerously-skip-permissions -"
+      else
+        agent_args_text="${AGENT_ARGS:--p -}"
+      fi
+    fi
     ;;
   opencode)
     [[ -n "$agent_bin" ]]       || agent_bin="${AGENT_BIN:-opencode}"
-    [[ -n "$agent_args_text" ]] || agent_args_text="${AGENT_ARGS:-run -}"
+    if [[ -z "$agent_args_text" ]]; then
+      agent_args_text="${AGENT_ARGS:-run -}"
+    fi
+    if (( yolo_mode == 1 )); then
+      printf '%s\n' "PLANSELFPLAY WARNING | --yolo is not supported for opencode; continuing with the normal preset" >&2
+    fi
     ;;
   *) quit "Unknown agent: $agent. Valid values: codex, claude, opencode" ;;
 esac
