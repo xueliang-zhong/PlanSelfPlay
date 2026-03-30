@@ -41,7 +41,7 @@ archive_parallel_branch() {
   git show-ref --verify --quiet "refs/heads/$backup_branch" && backup_branch="${backup_branch}-$$"
   git branch -m "$branch" "$backup_branch" >/dev/null 2>&1 \
     || quit "Could not archive stale parallel branch: $branch"
-  printf 'PLANSELFPLAY | preserved stale branch as %s\n' "$backup_branch"
+  printf 'PSP | preserved stale branch as %s\n' "$backup_branch"
 }
 prepare_parallel_slot() {
   local branch="$1" path="$2" ahead=0
@@ -195,7 +195,7 @@ case "$agent" in
       agent_args_text="${AGENT_ARGS:-run -}"
     fi
     if (( yolo_mode == 1 )); then
-      printf '%s\n' "PLANSELFPLAY WARNING | --yolo is not supported for opencode; continuing with the normal preset" >&2
+      printf '%s\n' "PSP WARNING | --yolo is not supported for opencode; continuing with the normal preset" >&2
     fi
     ;;
   *) quit "Unknown agent: $agent. Valid values: codex, claude, opencode" ;;
@@ -219,10 +219,10 @@ agent_command=("$agent_bin" "${agent_args[@]}")
 
 plan_display="$plan_path"
 [[ -n "$goal_text" && "$plan_explicit" == 0 ]] && plan_display="(builtin)"
-printf 'PLANSELFPLAY CONFIG | agent=%s | plan=%s | goal=%s | generations=%s | population=%s | sleep=%s | budget=%s | stdout=%s | bin=%s | args=%s\n' \
+printf 'PSP CONFIG | agent=%s | plan=%s | goal=%s | generations=%s | population=%s | sleep=%s | budget=%s | stdout=%s | bin=%s | args=%s\n' \
   "$agent" "$plan_display" "${goal_text:-(none)}" "$generations" "$population" "$sleep_seconds" "${time_budget}s" "$stdout_mode" "$agent_bin" "$agent_args_text"
 if [[ "$dry_run" == 1 ]]; then
-  printf 'PLANSELFPLAY DRY RUN |'; printf ' %q' "${agent_command[@]}"
+  printf 'PSP DRY RUN |'; printf ' %q' "${agent_command[@]}"
   [[ "$plan_display" == "(builtin)" ]] && printf ' < <(builtin_plan_template %q)\n' "$goal_text" \
     || printf ' < %q\n' "$plan_path"
   exit 0
@@ -265,14 +265,14 @@ trap '[[ -n "$tmp_plan" ]] && rm -f "$tmp_plan"; [[ -n "$repo_root" ]] && { git 
 psp_start_time=$SECONDS
 for ((generation=1; generation<=generations; generation++)); do
   if (( time_budget > 0 && SECONDS - psp_start_time >= time_budget )); then
-    printf 'PLANSELFPLAY | time budget of %ds reached before generation %d/%d, stopping\n' \
+    printf 'PSP | time budget of %ds reached before generation %d/%d, stopping\n' \
       "$time_budget" "$generation" "$generations"
     break
   fi
   generation_start="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
   pids=()
   for ((member=1; member<=population; member++)); do
-    printf 'PLANSELFPLAY %d/%d [%d/%d] | agent=%s | plan=%s | bin=%s | args=%s\n' \
+    printf 'PSP %d/%d [%d/%d] | agent=%s | plan=%s | bin=%s | args=%s\n' \
       "$generation" "$generations" "$member" "$population" "$agent" "$plan_display" "$agent_bin" "$agent_args_text"
     if (( population > 1 )); then
       wt_branch="psp/gen${generation}-m${member}"
@@ -299,18 +299,18 @@ for ((generation=1; generation<=generations; generation++)); do
       if (( new_commits > 0 )); then
         active_branches+=("$wt_branch")
       else
-        printf 'PLANSELFPLAY %d/%d [%d/%d] | no new commits\n' \
+        printf 'PSP %d/%d [%d/%d] | no new commits\n' \
           "$generation" "$generations" "$member" "$population"
         append_result "$generation" "$member" "no_commit" "-" "no new commits"
         git branch -D "${wt_branch}" 2>/dev/null || true
       fi
     done
     if (( ${#active_branches[@]} == 0 )); then
-      printf 'PLANSELFPLAY %d/%d | no members produced commits\n' "$generation" "$generations"
+      printf 'PSP %d/%d | no members produced commits\n' "$generation" "$generations"
     elif (( ${#active_branches[@]} > 1 )) && \
          git merge --no-ff -m "psp: octopus merge gen${generation} [$(IFS=,; echo "${active_branches[*]/#*-/}")]" "${active_branches[@]}" >/dev/null 2>&1; then
       # Tier 1: octopus merge — all branches, no conflicts
-      printf 'PLANSELFPLAY %d/%d | octopus: merged all %d active branches\n' \
+      printf 'PSP %d/%d | octopus: merged all %d active branches\n' \
         "$generation" "$generations" "${#active_branches[@]}"
       for wt_branch in "${active_branches[@]}"; do
         member_num="${wt_branch##*-m}"
@@ -327,7 +327,7 @@ for ((generation=1; generation<=generations; generation++)); do
         if (( new_commits == 0 )); then
           git branch -D "${wt_branch}" 2>/dev/null || true
         elif git merge --no-ff -m "psp: merge [psp:gen${generation}-m${member_num}]" "${wt_branch}" >/dev/null 2>&1; then
-          printf 'PLANSELFPLAY %d/%d [%d/%d] | merged %d commit(s)\n' \
+          printf 'PSP %d/%d [%d/%d] | merged %d commit(s)\n' \
             "$generation" "$generations" "$member_num" "$population" "$new_commits"
           member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
           append_result "$generation" "$member_num" "merged" "$member_head" "merged ${new_commits} commit(s)"
@@ -336,7 +336,7 @@ for ((generation=1; generation<=generations; generation++)); do
           git merge --abort 2>/dev/null || true
           if git merge --no-ff -m "psp: partial merge [psp:gen${generation}-m${member_num}] (-X ours)" -X ours "${wt_branch}" >/dev/null 2>&1; then
             # Tier 3: ours strategy — non-conflicting hunks taken, main wins conflicts
-            printf 'PLANSELFPLAY %d/%d [%d/%d] | partial merge (-X ours, %d commit(s))\n' \
+            printf 'PSP %d/%d [%d/%d] | partial merge (-X ours, %d commit(s))\n' \
               "$generation" "$generations" "$member_num" "$population" "$new_commits"
             member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
             append_result "$generation" "$member_num" "partial_merge" "$member_head" "merged with -X ours (${new_commits} commit(s))"
@@ -344,7 +344,7 @@ for ((generation=1; generation<=generations; generation++)); do
           else
             git merge --abort 2>/dev/null || true
             # Last resort: rescue knowledge artifacts
-            printf 'PLANSELFPLAY %d/%d [%d/%d] | conflict, rescuing memory (branch kept: %s)\n' \
+            printf 'PSP %d/%d [%d/%d] | conflict, rescuing memory (branch kept: %s)\n' \
               "$generation" "$generations" "$member_num" "$population" "${wt_branch}"
             while IFS= read -r f; do
               [[ -z "$f" ]] && continue
