@@ -16,6 +16,8 @@ RETHINK: after the first design, pause and say exactly "Wait, let me rethink, ho
 
 AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
 
+RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, member, status, commit, and note.
+
 UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
 
 WRITE SKILLS: promote a lesson into skill_<topic>.md only when it is reusable, concrete, and likely to help many future runs. Do not create a skill for a one-off repo quirk, a weak hunch, or a trick that succeeded only once.

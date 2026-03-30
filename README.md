@@ -100,6 +100,7 @@ DEAD ENDS: read FAILED_PATHS.md; never re-try listed approaches; append new fail
 STRATEGY: use a 90%/10% split between refinement and one mutation.
 RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently."
 AT TASK COMPLETION: write agent_<topic>_memory.md.
+RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, member, status, commit, and note.
 UPDATE CURRENT MEMORY: merge still-relevant lessons into CURRENT_MEMORY.md.
 WRITE SKILLS: promote a lesson into skill_<topic>.md only when it is reusable, concrete, and likely to help many future runs. Do not create a skill for a one-off repo quirk, a weak hunch, or a trick that succeeded only once.
 SKILL HYGIENE: patch an existing skill when refining the same technique; create a new skill only for a genuinely different technique. Keep skills short, actionable, and low-duplication.
@@ -126,7 +127,7 @@ where most of the customization lives.
 Then:
 
 1. Rewrite `DOMAIN` and `GOAL` so they match the repo and the optimization target.
-2. Keep `LEARN FROM CURRENT MEMORY`, `LEARN FROM PREVIOUS RUNS`, `APPLY SKILLS`, `DEAD ENDS`, `STRATEGY`, `RETHINK`, `AT TASK COMPLETION`, `UPDATE CURRENT MEMORY`, and `WRITE SKILLS` unless you intentionally want a different memory or search loop.
+2. Keep `LEARN FROM CURRENT MEMORY`, `LEARN FROM PREVIOUS RUNS`, `APPLY SKILLS`, `DEAD ENDS`, `STRATEGY`, `RETHINK`, `AT TASK COMPLETION`, `RESULTS LEDGER`, `UPDATE CURRENT MEMORY`, and `WRITE SKILLS` unless you intentionally want a different memory or search loop.
 3. Update `SUCCESS CONDITION` and `CONSTRAINTS` to fit the environment you care about.
 4. Preserve plain-text trajectory artifacts such as `agent_*.md`, diffs, and
    commits so the next run can retrieve prior cases instead of starting cold.
@@ -136,7 +137,7 @@ Then:
 - Pure text over hidden state: the PLAN is the policy.
 - One small loop over framework glue: the runner stays easy to audit.
 - Ordinary artifacts over special storage: diffs, commits, `agent_*.md`,
-  `CURRENT_MEMORY.md`, and `skill_*.md`
+  `CURRENT_MEMORY.md`, `skill_*.md`, and `results.tsv`
   preserve the trajectory.
 - Small control surface over broad automation: fewer moving parts make the
   pattern easier to reuse and review.
@@ -159,6 +160,7 @@ control maps to the nearest optimization or agent-learning role.
 | STRATEGY: use a 90%/10% split between refinement and one mutation.                                            | Exploration/exploitation policy: mostly local search around the current best, with a small mutation budget. | [Wiki: Exploration-exploitation dilemma](https://en.wikipedia.org/wiki/Exploration%E2%80%93exploitation_dilemma)<br>[Wiki: Local search](https://en.wikipedia.org/wiki/Local_search_(optimization))<br>[Wiki: Mutation (evolutionary algorithm)](https://en.wikipedia.org/wiki/Mutation_(evolutionary_algorithm)) |
 | RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." | Mandatory self-critique: forces a revision pass before acting, reducing premature commitment.               | [Paper: Self-Refine: Iterative Refinement with Self-Feedback](https://arxiv.org/abs/2303.17651)<br>[Paper: Tree of Thoughts](https://arxiv.org/abs/2305.10601)                                                                                                                  |
 | AT TASK COMPLETION: write agent_<topic>_memory.md.                                                            | Episodic memory write-back: compress the run into a retrievable case for future generations.                | [Paper: ExpeL: LLM Agents Are Experiential Learners](https://arxiv.org/abs/2308.10144)<br>[Wiki: Episodic memory](https://en.wikipedia.org/wiki/Episodic_memory)                                                                                                                |
+| RESULTS LEDGER: the runner maintains results.tsv with timestamp, generation, member, status, commit, and note. | Transparent experiment ledger: keep a machine-friendly audit trail of what each generation actually produced. | [Wiki: Tab-separated values](https://en.wikipedia.org/wiki/Tab-separated_values)<br>[Wiki: Experimental record](https://en.wikipedia.org/wiki/Laboratory_notebook) |
 | UPDATE CURRENT MEMORY: merge still-relevant lessons into CURRENT_MEMORY.md.                                   | Memory curation: promote short-horizon lessons into a compact active summary for future runs.               | [Wiki: Working memory](https://en.wikipedia.org/wiki/Working_memory)<br>[Wiki: Knowledge management](https://en.wikipedia.org/wiki/Knowledge_management)                                                                                                                         |
 | WRITE SKILLS: promote a lesson into `skill_<topic>.md` only when it is reusable, concrete, and likely to help many future runs. | Skill distillation with a promotion threshold: only stable, broadly useful techniques become procedural knowledge. | [Wiki: Procedural knowledge](https://en.wikipedia.org/wiki/Procedural_knowledge)<br>[Paper: Voyager (skill library for open-ended agents)](https://arxiv.org/abs/2305.16291) |
 | SELECTION: keep candidates (git commit patches) with better results.                                          | Selection pressure: keep only the strictly better candidate; reset otherwise.                               | [Wiki: Selection (evolutionary algorithm)](https://en.wikipedia.org/wiki/Selection_(evolutionary_algorithm))<br>[Wiki: Hill climbing](https://en.wikipedia.org/wiki/Hill_climbing)                                                                                              |
@@ -176,6 +178,7 @@ PSP works best with a tiered memory model: keep the full timestamped timeline, b
 | 2 | `CURRENT_MEMORY.md` | Update when a lesson is likely to help the next few runs in this repo. | Medium | Repo-wide, near-term | Active |
 | 3 | `skill_<topic>.md` | Create or update when a lesson becomes a reusable technique, not just a one-off observation. | Long | Broad, many future agents | Procedural |
 | 4 | `FAILED_PATHS.md` | Append when a failure pattern is clear enough that future runs should avoid repeating it. | Medium to long | Repo-wide avoidance | Negative |
+| 5 | `results.tsv` | The runner appends one row per generation or member outcome with a compact status and note. | Medium | Repo-wide audit trail | Ledger |
 | Promotion rule | All tiers | Never promote memory automatically; promotion should always require judgment. | Always | Applies to every tier | Governance |
 
 
@@ -225,6 +228,8 @@ PSP works best with a tiered memory model: keep the full timestamped timeline, b
 **🧠 Current memory (`CURRENT_MEMORY.md`).** Use this as the compact front door for repo-specific lessons that should help the next few generations. Keep it short and curated. Timestamped `agent_*.md` files remain the detailed timeline; `CURRENT_MEMORY.md` is the active summary layer that future runs should read first.
 
 **🛠️ Skills (`skill_*.md`).** Promote a lesson into a skill only when it is reusable, concrete, and likely to help many future runs, not when it is just a one-off repo quirk or a trick that worked once. Patch an existing skill when refining the same technique; create a new skill only for a genuinely different technique. Keep each skill short, actionable, and low-duplication. Future generations read all `skill_*.md` files at the start of each run via `APPLY SKILLS` and build on accumulated know-how rather than re-deriving it. Skills are tracked in git like any other file. In `-jN` mode, skill files are rescued alongside `agent_*.md` memory files even when code conflicts prevent a full merge.
+
+**📒 Results ledger (`results.tsv`).** The runner maintains a tab-separated ledger with `timestamp_utc`, `generation`, `member`, `status`, `commit`, and `note`. This keeps the run history machine-friendly without hiding it behind a database. Use it as the compact audit trail; keep richer explanations in memory files.
 
 ### Parallelism
 

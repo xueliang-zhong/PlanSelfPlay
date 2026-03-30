@@ -15,10 +15,25 @@ dry_run="${DRY_RUN:-0}"
 plan_seen=0
 init_plan_path=""
 yolo_mode=0
+results_path=""
 
 quit() { printf '%s\n' "$*" >&2; exit 1; }
 arg() { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
 set_plan() { (( plan_seen == 0 )) || quit "Provide the plan path once"; plan_seen=1; plan_explicit=1; plan_path="$1"; }
+ensure_results_ledger() {
+  [[ -n "$results_path" ]] || return 0
+  if [[ ! -e "$results_path" ]]; then
+    printf 'timestamp_utc\tgeneration\tmember\tstatus\tcommit\tnote\n' > "$results_path"
+  fi
+}
+append_result() {
+  [[ -n "$results_path" ]] || return 0
+  local generation="$1" member="$2" status="$3" commit="$4" note="$5" timestamp
+  ensure_results_ledger
+  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$timestamp" "$generation" "$member" "$status" "${commit:--}" "$note" >> "$results_path"
+}
 archive_parallel_branch() {
   local branch="$1" timestamp backup_branch
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -93,6 +108,8 @@ STRATEGY: use a 90%/10% probability split between refining the strongest current
 RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then improve the design based on rethink.
 
 AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
+
+RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, member, status, commit, and note.
 
 UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
 
@@ -236,6 +253,12 @@ if (( population > 1 )); then
     || quit "POPULATION > 1 requires a git repository; use -j1 outside git repos"
   repo_root=$(git rev-parse --show-toplevel)
 fi
+if [[ -n "$repo_root" ]]; then
+  results_path="${repo_root}/results.tsv"
+else
+  results_path="${PWD}/results.tsv"
+fi
+ensure_results_ledger
 
 trap '[[ -n "$tmp_plan" ]] && rm -f "$tmp_plan"; [[ -n "$repo_root" ]] && { git worktree prune -q 2>/dev/null || true; rm -rf "${repo_root}/.psp"; }' EXIT
 
@@ -246,6 +269,7 @@ for ((generation=1; generation<=generations; generation++)); do
       "$time_budget" "$generation" "$generations"
     break
   fi
+  generation_start="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
   pids=()
   for ((member=1; member<=population; member++)); do
     printf 'PLANSELFPLAY %d/%d [%d/%d] | agent=%s | plan=%s | bin=%s | args=%s\n' \
@@ -277,6 +301,7 @@ for ((generation=1; generation<=generations; generation++)); do
       else
         printf 'PLANSELFPLAY %d/%d [%d/%d] | no new commits\n' \
           "$generation" "$generations" "$member" "$population"
+        append_result "$generation" "$member" "no_commit" "-" "no new commits"
         git branch -D "${wt_branch}" 2>/dev/null || true
       fi
     done
@@ -288,6 +313,9 @@ for ((generation=1; generation<=generations; generation++)); do
       printf 'PLANSELFPLAY %d/%d | octopus: merged all %d active branches\n' \
         "$generation" "$generations" "${#active_branches[@]}"
       for wt_branch in "${active_branches[@]}"; do
+        member_num="${wt_branch##*-m}"
+        member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
+        append_result "$generation" "$member_num" "merged_octopus" "$member_head" "merged via octopus"
         git branch -D "${wt_branch}" 2>/dev/null || true
       done
     else
@@ -301,6 +329,8 @@ for ((generation=1; generation<=generations; generation++)); do
         elif git merge --no-ff -m "psp: merge [psp:gen${generation}-m${member_num}]" "${wt_branch}" >/dev/null 2>&1; then
           printf 'PLANSELFPLAY %d/%d [%d/%d] | merged %d commit(s)\n' \
             "$generation" "$generations" "$member_num" "$population" "$new_commits"
+          member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
+          append_result "$generation" "$member_num" "merged" "$member_head" "merged ${new_commits} commit(s)"
           git branch -D "${wt_branch}" 2>/dev/null || true
         else
           git merge --abort 2>/dev/null || true
@@ -308,6 +338,8 @@ for ((generation=1; generation<=generations; generation++)); do
             # Tier 3: ours strategy — non-conflicting hunks taken, main wins conflicts
             printf 'PLANSELFPLAY %d/%d [%d/%d] | partial merge (-X ours, %d commit(s))\n' \
               "$generation" "$generations" "$member_num" "$population" "$new_commits"
+            member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
+            append_result "$generation" "$member_num" "partial_merge" "$member_head" "merged with -X ours (${new_commits} commit(s))"
             git branch -D "${wt_branch}" 2>/dev/null || true
           else
             git merge --abort 2>/dev/null || true
@@ -321,9 +353,18 @@ for ((generation=1; generation<=generations; generation++)); do
             git add -- 'agent_*.md' 'skill_*.md' 'FAILED_PATHS.md' 'CURRENT_MEMORY.md' 2>/dev/null || true
             git diff --cached --quiet \
               || git commit -m "psp: rescue knowledge artifacts from gen${generation}-m${member_num} (conflict)"
+            member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
+            append_result "$generation" "$member_num" "rescued" "$member_head" "code conflict; rescued knowledge artifacts"
           fi
         fi
       done
+    fi
+  else
+    generation_end="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
+    if [[ "$generation_end" == "$generation_start" ]]; then
+      append_result "$generation" "1" "no_commit" "-" "no new commit"
+    else
+      append_result "$generation" "1" "committed" "$generation_end" "HEAD advanced this generation"
     fi
   fi
   if (( generation < generations )); then sleep "$sleep_seconds"; fi
