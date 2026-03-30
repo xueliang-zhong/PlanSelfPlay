@@ -20,12 +20,6 @@ Works with **codex**, **claude** (Claude Code), and **opencode** out of the box.
 | Runner | `planselfplay.sh` | Replays the plan through the chosen agent with a tiny shell loop |
 | Outputs | diffs, commits, and optional `agent_*.md` notes | Keeps the trajectory visible in normal repo artifacts |
 
-## Start Here
-
-- Want the policy first: read `PLAN.example.txt`.
-- Want the shell mechanics first: read `planselfplay.sh`.
-- Want the shortest runnable path: run `./planselfplay.sh --dry-run`.
-
 ## Quickstart
 
 Requirements: `bash`, at least one of `codex` / `claude` / `opencode` on
