@@ -173,6 +173,12 @@ constraints.
 
 **Use `--goal` for targeted experiments.** Keep one canonical `plan.txt` and vary the objective at the command line. Each run gets its own uniquely named temp file so parallel or sequential experiments stay traceable.
 
+**Time budget (`--time-budget`).** Caps the total wall-clock run time. The loop exits cleanly before starting a generation that would exceed the budget, so runs are always comparable and predictable. Useful for overnight experiments or CI pipelines with a hard time limit:
+
+```bash
+./planselfplay.sh --goal "reduce lines of code" --time-budget 3600   # stop after 1 hour
+```
+
 **Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement. With `-jN`, each generation multiplies token spend by N, so start with `-j2` before going wider.
 
 **Unblocking agents (use with caution).** When system restrictions or access controls prevent the agent from proceeding, `--yolo` selects the unsafe preset for supported agents:

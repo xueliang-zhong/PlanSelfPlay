@@ -9,6 +9,7 @@ goal_text="${GOAL:-}"
 generations="${GENERATIONS:-10}"
 population="${POPULATION:-1}"
 sleep_seconds="${SLEEP_SECONDS:-2}"
+time_budget="${TIME_BUDGET:-0}"
 stdout_mode="${STDOUT_MODE:-discard}"
 dry_run="${DRY_RUN:-0}"
 plan_seen=0
@@ -54,6 +55,7 @@ Options:
   --generations N, -g                Positive integer (default: 10)
   --population N, -jN                Parallel agents per generation (default: 1)
   --sleep SECONDS, -s                Non-negative delay between generations
+  --time-budget SECONDS, -t          Stop after this many wall-clock seconds (0 = no limit)
   --stdout discard|inherit, -o       Agent stdout handling
   --agent-bin PATH                   Agent executable override
   --agent-args STRING, -x            Full agent args override (replaces preset defaults)
@@ -65,7 +67,7 @@ Agent presets (overridable via --agent-args):
   claude    -> claude -p -
   opencode  -> opencode run -
 
-Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS POPULATION SLEEP_SECONDS STDOUT_MODE DRY_RUN
+Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS POPULATION SLEEP_SECONDS TIME_BUDGET STDOUT_MODE DRY_RUN
              (legacy: CODEX_BIN CODEX_ARGS map to AGENT_BIN AGENT_ARGS for codex)
 EOF
 }
@@ -122,6 +124,7 @@ while (( $# )); do
     -j)            population="$(arg "$@")"; shift ;;
     -j*)           population="${1#-j}" ;;
     -s|--sleep)      sleep_seconds="$(arg "$@")"; shift ;;
+    -t|--time-budget) time_budget="$(arg "$@")"; shift ;;
     -o|--stdout)     stdout_mode="$(arg "$@")"; shift ;;
     --agent-bin|--codex-bin)  agent_bin="$(arg "$@")"; shift ;;
     -x|--agent-args|--codex-args) agent_args_text="$(arg "$@")"; shift ;;
@@ -182,6 +185,7 @@ fi
 [[ "$generations" =~ ^[1-9][0-9]*$ ]] || quit "GENERATIONS must be a positive integer: $generations"
 [[ "$population" =~ ^[1-9][0-9]*$ ]] || quit "POPULATION must be a positive integer: $population"
 [[ "$sleep_seconds" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]] || quit "SLEEP_SECONDS must be a non-negative number: $sleep_seconds"
+[[ "$time_budget" =~ ^[0-9]+$ ]] || quit "TIME_BUDGET must be a non-negative integer (seconds): $time_budget"
 [[ "$dry_run" =~ ^[01]$ ]] || quit "DRY_RUN must be 0 or 1: $dry_run"
 [[ "$stdout_mode" == discard || "$stdout_mode" == inherit ]] || quit "STDOUT_MODE must be 'discard' or 'inherit': $stdout_mode"
 stdout_target=/dev/null
@@ -192,8 +196,8 @@ agent_command=("$agent_bin" "${agent_args[@]}")
 
 plan_display="$plan_path"
 [[ -n "$goal_text" && "$plan_explicit" == 0 ]] && plan_display="(builtin)"
-printf 'PLANSELFPLAY CONFIG | agent=%s | plan=%s | goal=%s | generations=%s | population=%s | sleep=%s | stdout=%s | bin=%s | args=%s\n' \
-  "$agent" "$plan_display" "${goal_text:-(none)}" "$generations" "$population" "$sleep_seconds" "$stdout_mode" "$agent_bin" "$agent_args_text"
+printf 'PLANSELFPLAY CONFIG | agent=%s | plan=%s | goal=%s | generations=%s | population=%s | sleep=%s | budget=%s | stdout=%s | bin=%s | args=%s\n' \
+  "$agent" "$plan_display" "${goal_text:-(none)}" "$generations" "$population" "$sleep_seconds" "${time_budget}s" "$stdout_mode" "$agent_bin" "$agent_args_text"
 if [[ "$dry_run" == 1 ]]; then
   printf 'PLANSELFPLAY DRY RUN |'; printf ' %q' "${agent_command[@]}"
   [[ "$plan_display" == "(builtin)" ]] && printf ' < <(builtin_plan_template %q)\n' "$goal_text" \
@@ -229,7 +233,13 @@ fi
 
 trap '[[ -n "$tmp_plan" ]] && rm -f "$tmp_plan"; [[ -n "$repo_root" ]] && { git worktree prune -q 2>/dev/null || true; rm -rf "${repo_root}/.psp"; }' EXIT
 
+psp_start_time=$SECONDS
 for ((generation=1; generation<=generations; generation++)); do
+  if (( time_budget > 0 && SECONDS - psp_start_time >= time_budget )); then
+    printf 'PLANSELFPLAY | time budget of %ds reached before generation %d/%d, stopping\n' \
+      "$time_budget" "$generation" "$generations"
+    break
+  fi
   pids=()
   for ((member=1; member<=population; member++)); do
     printf 'PLANSELFPLAY %d/%d [%d/%d] | agent=%s | plan=%s | bin=%s | args=%s\n' \
