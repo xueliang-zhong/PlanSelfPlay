@@ -50,8 +50,8 @@ Options:
   --plan PATH, -p                    Plan file to replay
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.example.txt)
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
-  --goal TEXT, -g                    Replace the GOAL: line in the plan with this text
-  --generations N, -G                Positive integer (default: 10)
+  --goal TEXT, -G                    Replace the GOAL: line in the plan with this text
+  --generations N, -g                Positive integer (default: 10)
   --population N, -jN                Parallel agents per generation (default: 1)
   --sleep SECONDS, -s                Non-negative delay between generations
   --stdout discard|inherit, -o       Agent stdout handling
@@ -109,8 +109,8 @@ while (( $# )); do
       fi
       ;;
     --yolo)       yolo_mode=1 ;;
-    -g|--goal)       goal_text="$(arg "$@")"; shift ;;
-    -G|--generations) generations="$(arg "$@")"; shift ;;
+    -G|--goal)       goal_text="$(arg "$@")"; shift ;;
+    -g|--generations) generations="$(arg "$@")"; shift ;;
     --population)  population="$(arg "$@")"; shift ;;
     -j)            population="$(arg "$@")"; shift ;;
     -j*)           population="${1#-j}" ;;

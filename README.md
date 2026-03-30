@@ -33,20 +33,20 @@ If you want proof before theory, start here:
 
 # Run the built-in plan template with a custom goal
 ./planselfplay.sh --goal "reduce lines of code"
-./planselfplay.sh -g "maximise function-level test coverage"
+./planselfplay.sh -G "maximise function-level test coverage"
 
 # Create your own starter plan file
 ./planselfplay.sh --init-plan plan.txt
 
 # Run your own plan for 6 generations
 ./planselfplay.sh --plan plan.txt --generations 6
-./planselfplay.sh -p plan.txt -G 6
+./planselfplay.sh -p plan.txt -g 6
 
 # Run 3 agents per generation
 ./planselfplay.sh --plan plan.txt --generations 6 -j3
 
 # Run the same plan with Claude
-./planselfplay.sh -a claude -p plan.txt -G 6
+./planselfplay.sh -a claude -p plan.txt -g 6
 
 # Run the same plan with opencode
 ./planselfplay.sh --agent opencode --plan plan.txt --generations 6
