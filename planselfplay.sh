@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 agent="${AGENT:-codex}"
-plan_path="${PLAN_PATH:-${PWD}/PLAN.example.txt}"
+plan_path="${PLAN_PATH:-${PWD}/plan.example.txt}"
 plan_explicit=0; [[ -n "${PLAN_PATH:-}" ]] && plan_explicit=1
 agent_bin=""
 agent_args_text=""
@@ -48,7 +48,7 @@ Replay a pure-text PLAN through a coding agent (codex, claude, or opencode).
 Options:
   --agent codex|claude|opencode, -a  Coding agent to use (default: codex)
   --plan PATH, -p                    Plan file to replay
-  --init-plan [PATH], -i             Write a starter plan file and exit (default: PLAN.example.txt)
+  --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.example.txt)
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
   --goal TEXT, -g                    Replace the GOAL: line in the plan with this text
   --generations N, -G                Positive integer (default: 10)
@@ -105,7 +105,7 @@ while (( $# )); do
         init_plan_path="$2"
         shift
       else
-        init_plan_path="PLAN.example.txt"
+        init_plan_path="plan.example.txt"
       fi
       ;;
     --yolo)       yolo_mode=1 ;;

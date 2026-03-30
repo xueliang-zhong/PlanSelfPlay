@@ -16,7 +16,7 @@ Works with **codex**, **claude** (Claude Code), and **opencode** out of the box.
 
 | Part | What it is | Why it matters |
 | --- | --- | --- |
-| Policy | `PLAN.example.txt` | Keeps the agent rules, memory, strategy, and constraints in plain text |
+| Policy | `plan.example.txt` | Keeps the agent rules, memory, strategy, and constraints in plain text |
 | Runner | `planselfplay.sh` | Replays the plan through the chosen agent with a tiny shell loop |
 | Outputs | diffs, commits, and optional `agent_*.md` notes | Keeps the trajectory visible in normal repo artifacts |
 
@@ -71,14 +71,14 @@ The public surface area is intentionally small and easy to audit:
 
 | File | Role |
 | --- | --- |
-| [PLAN.example.txt](PLAN.example.txt) | Bundled example PLAN and plain-text appendix |
+| [plan.example.txt](plan.example.txt) | Bundled example PLAN and plain-text appendix |
 | [planselfplay.sh](planselfplay.sh) | Small driver that replays a PLAN through the chosen agent |
 | [README.md](README.md) | Overview, quickstart, adaptation guide, and optional ML mapping |
 | [LICENSE](LICENSE) | MIT license |
 
 Pick the shortest reading path that matches what you need:
 
-- Want the idea first: read `PLAN.example.txt`.
+- Want the idea first: read `plan.example.txt`.
 - Want the mechanics first: read `planselfplay.sh`.
 - Want the shortest runnable path: jump to Quickstart.
 - Want the research framing: jump to the optional ML mapping section below.
@@ -87,7 +87,7 @@ Pick the shortest reading path that matches what you need:
 
 The mechanics stay small on purpose: one plain-text file defines the policy,
 and one shell script replays it. A quick example can be found at
-`PLAN.example.txt`, but the runner can replay any readable plan path.
+`plan.example.txt`, but the runner can replay any readable plan path.
 
 **Example plan shape**
 ```text
@@ -113,7 +113,7 @@ constraints, and leaves behind artifacts that the next generation can inspect.
 
 ## Adapting It
 
-Start with [`PLAN.example.txt`](PLAN.example.txt). In most repos, that is
+Start with [`plan.example.txt`](plan.example.txt). In most repos, that is
 where most of the customization lives.
 
 Then:
