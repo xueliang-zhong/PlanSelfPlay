@@ -158,11 +158,16 @@ while (( $# )); do
   shift
 done
 
-# Read goal from stdin when piped: echo "improve tests" | psp
-# Overrides the GOAL env-var; ignored when stdin is a terminal.
+# Read goal from stdin.
+#   Piped:       echo "improve tests" | psp   — read silently
+#   Interactive: ./psp with no plan/goal      — show "Goal: " prompt
 if [[ ! -t 0 ]]; then
   stdin_goal=$(cat)
   [[ -n "$stdin_goal" ]] && goal_text="$stdin_goal"
+elif [[ -z "$goal_text" && "$plan_explicit" == 0 ]]; then
+  printf 'Goal: ' >&2
+  IFS= read -r goal_text </dev/tty
+  [[ -n "$goal_text" ]] || quit "No goal provided"
 fi
 
 if [[ -n "$init_plan_path" ]]; then
