@@ -357,12 +357,13 @@ plan_display="$plan_path"
 # Column width for the generation counter (e.g. " 1/10", "10/10")
 gen_w=${#generations}
 nm_w=$(( gen_w * 2 + 1 ))
+yolo_note=""; (( yolo_mode )) && yolo_note=" | yolo: yes"
 if [[ "$plan_explicit" == 1 ]]; then
-  printf "| PSP %-*s | plan: %s | agent: %s | generations: %s |\n" \
-    "$nm_w" "RUN" "$plan_display" "$agent" "$generations"
+  printf "| PSP %-*s | plan: %s | agent: %s | generations: %s%s |\n" \
+    "$nm_w" "RUN" "$plan_display" "$agent" "$generations" "$yolo_note"
 else
-  printf "| PSP %-*s | goal: %s | agent: %s | generations: %s |\n" \
-    "$nm_w" "RUN" "$goal_text" "$agent" "$generations"
+  printf "| PSP %-*s | goal: %s | agent: %s | generations: %s%s |\n" \
+    "$nm_w" "RUN" "$goal_text" "$agent" "$generations" "$yolo_note"
 fi
 if [[ "$dry_run" == 1 ]]; then
   printf 'PSP DRY RUN |'; printf ' %q' "${agent_command[@]}"
@@ -412,14 +413,16 @@ for ((generation=1; generation<=generations; generation++)); do
   fi
   generation_start="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
   printf "| PSP %*d/%-*d | running...%s |\n" "$gen_w" "$generation" "$gen_w" "$generations" "$gen_log_note"
+  gen_t=$SECONDS
   "${agent_command[@]}" < "$effective_plan" > "$gen_output_target" 2>&1
+  took=$(( SECONDS - gen_t ))
   generation_end="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
   if [[ "$generation_end" == "$generation_start" ]]; then
     append_result "$generation" "no_commit" "-" "no new commit"
-    printf "| PSP %*d/%-*d | no commit |\n" "$gen_w" "$generation" "$gen_w" "$generations"
+    printf "| PSP %*d/%-*d | no commit | took: %ds |\n" "$gen_w" "$generation" "$gen_w" "$generations" "$took"
   else
     append_result "$generation" "committed" "$generation_end" "HEAD advanced"
-    printf "| PSP %*d/%-*d | committed %s |\n" "$gen_w" "$generation" "$gen_w" "$generations" "${generation_end:0:7}"
+    printf "| PSP %*d/%-*d | committed %s | took: %ds |\n" "$gen_w" "$generation" "$gen_w" "$generations" "${generation_end:0:7}" "$took"
   fi
   (( generation < generations )) && sleep "$sleep_seconds"
 done
