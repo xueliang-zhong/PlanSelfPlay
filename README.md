@@ -35,8 +35,8 @@ If you want proof before theory, start here:
 ./psp --dry-run
 
 # Run the built-in plan template with a custom goal (no plan file needed)
-./psp -G "reduce lines of code"
-./psp -G "maximise function-level test coverage"
+echo "reduce lines of code" | ./psp
+echo "maximise function-level test coverage" | ./psp
 
 # Create your own starter plan file
 ./psp --init-plan plan.txt
@@ -48,11 +48,11 @@ If you want proof before theory, start here:
 ./psp -p plan.txt -g6 -j3
 
 # Run with a time budget instead of fixed generations
-./psp -G "reduce lines of code" -t 3600
+echo "reduce lines of code" | ./psp -t 3600
 
 # Run with Claude or opencode
 ./psp -a claude -p plan.txt -g6
-./psp -a opencode -G "reduce lines of code" -g6
+echo "reduce lines of code" | ./psp -a opencode -g6
 ```
 
 ## Agent Presets
@@ -194,18 +194,18 @@ PSP works best with a tiered memory model: keep the full timestamped timeline, b
 
 **👀 Watch live output.** Add `--stdout inherit` to print agent output directly to the terminal instead of discarding it, useful when debugging a new plan.
 
-**🔎 Inspect the effective plan.** When using `--goal`, the script writes a `plan.tmp.<id>` file (built-in template) or `<plan>.tmp.<id>` file (explicit plan) in the repo for the duration of the run. Open it to confirm the `GOAL:` line and the full policy before the first generation finishes.
+**🔎 Inspect the effective plan.** When a goal is piped in, the script writes a `plan.tmp.<id>` file (built-in template) or `<plan>.tmp.<id>` file (explicit plan) in the repo for the duration of the run. Open it to confirm the `GOAL:` line and the full policy before the first generation finishes.
 
 **🧪 Preview without running.** `--dry-run` prints the resolved agent command and exits, useful for checking `--agent-bin` / `--agent-args` overrides without invoking the agent.
 
-**🎯 Use `--goal` for targeted experiments.** Keep one canonical `plan.txt` and vary the objective at the command line. Each run gets its own uniquely named temp file so parallel or sequential experiments stay traceable.
+**🎯 Pipe goals for targeted experiments.** Keep one canonical `plan.txt` and vary the objective via stdin. Each run gets its own uniquely named temp file so parallel or sequential experiments stay traceable.
 
 **✍️ Edit the plan on the fly.** You can often revise `plan.txt` mid-run and let the next generation pick up the new instructions automatically. Because the script invokes the agent once per generation, changes take effect at the next generation boundary without restarting the whole loop. In practice, this feels a bit like steering an active Codex session, but through the plan file.
 
 **⏱️ Time budget (`--time-budget`).** Caps the total wall-clock run time. The loop exits cleanly before starting a generation that would exceed the budget, so runs are always comparable and predictable. Useful for overnight experiments or CI pipelines with a hard time limit:
 
 ```bash
-./planselfplay.sh --goal "reduce lines of code" --time-budget 3600   # stop after 1 hour
+echo "reduce lines of code" | ./psp --time-budget 3600   # stop after 1 hour
 ```
 
 **💸 Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement. With `-jN`, each generation multiplies token spend by N, so start with `-j2` before going wider.

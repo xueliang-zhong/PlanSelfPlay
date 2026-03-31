@@ -59,14 +59,15 @@ prepare_parallel_slot() {
 usage() {
   cat <<EOF
 Usage: ${0##*/} [options] [plan-path]
+       echo "GOAL" | ${0##*/} [options]
 Replay a pure-text PLAN through a coding agent (codex, claude, or opencode).
+When stdin is a pipe the goal is read from it; a plan file is optional.
 
 Options:
   --agent codex|claude|opencode, -a  Coding agent to use (default: codex)
   --plan PATH, -p                    Plan file to replay
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.example.txt)
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
-  --goal TEXT, -G                    Replace the GOAL: line in the plan with this text
   --generations N, -g                Positive integer (default: 10)
   --population N, -jN                Parallel agents per generation (default: 1)
   --sleep SECONDS, -s                Non-negative delay between generations
@@ -87,7 +88,7 @@ Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS POPULATION SL
 EOF
 }
 
-# Built-in ML-style plan template; used by --goal when no --plan is given.
+# Built-in ML-style plan template; used when goal is piped via stdin and no --plan is given.
 # Update this function to change the default agent policy.
 builtin_plan_template() {
   cat <<PLAN_TEMPLATE
@@ -140,7 +141,6 @@ while (( $# )); do
       fi
       ;;
     --yolo)       yolo_mode=1 ;;
-    -G|--goal)       goal_text="$(arg "$@")"; shift ;;
     -g|--generations) generations="$(arg "$@")"; shift ;;
     -g*)           generations="${1#-g}" ;;
     --population)  population="$(arg "$@")"; shift ;;
@@ -157,6 +157,13 @@ while (( $# )); do
   esac
   shift
 done
+
+# Read goal from stdin when piped: echo "improve tests" | psp
+# Overrides the GOAL env-var; ignored when stdin is a terminal.
+if [[ ! -t 0 ]]; then
+  stdin_goal=$(cat)
+  [[ -n "$stdin_goal" ]] && goal_text="$stdin_goal"
+fi
 
 if [[ -n "$init_plan_path" ]]; then
   if [[ -e "$init_plan_path" ]]; then
@@ -201,7 +208,7 @@ case "$agent" in
   *) quit "Unknown agent: $agent. Valid values: codex, claude, opencode" ;;
 esac
 
-# Skip plan-file validation when --goal supplies the goal and no explicit --plan was given
+# Skip plan-file validation when stdin supplies the goal and no explicit --plan was given
 if [[ -z "$goal_text" || "$plan_explicit" == 1 ]]; then
   [[ -n "$plan_path" && -r "$plan_path" ]] || quit "Plan file is not readable: $plan_path"
 fi
