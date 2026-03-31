@@ -1,0 +1,1 @@
+- Shared-temp differential sweeps are invalid for stateful CLI flows like `--install` because the shell run mutates the fixture before the Python comparison.

@@ -1,5 +1,6 @@
 - Keep `psp.sh` as the shell oracle while `psp` evolves; parity is cheapest to preserve with end-to-end tests that run both entrypoints in isolated temp repos.
 - The generation loop currently exits with status `1` after a full successful run; that oddity is part of the shell implementation and the Python port preserves it for parity. Change both the oracle and tests together if you want to fix it.
 - Dry-run output needs Bash-style `%q` quoting semantics rather than `shlex.quote()` or exact parity will drift.
+- `%q` parity breaks on control characters like newlines and tabs; using Bash itself to render the dry-run command is simpler and more reliable than extending a custom Python escaper.
 - Error-path parity needs `stdout` and `stderr` checked independently; the shell sends usage text for unknown options to `stderr`, and the Python port can drift if tests only compare merged output.
 - `--history` parity depends on the shell's `cut -f5 | awk '!seen[$0]++'` behavior: lines without tabs pass through unchanged, short tab-separated lines collapse to a single empty output row, and duplicates are removed after that projection.

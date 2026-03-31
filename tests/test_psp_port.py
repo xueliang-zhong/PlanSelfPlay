@@ -76,6 +76,9 @@ class PSPPortTests(unittest.TestCase):
     def test_dry_run_builtin_goal_matches_shell(self) -> None:
         self.assert_parity(["--dry-run"], stdin="reduce lines of code\n")
 
+    def test_dry_run_builtin_goal_with_multiline_text_matches_shell(self) -> None:
+        self.assert_parity(["--dry-run"], stdin="line1\nline2")
+
     def test_dry_run_explicit_plan_with_goal_override_matches_shell(self) -> None:
         def fixture(workdir: Path, home: Path) -> None:
             (workdir / "plan.txt").write_text(
