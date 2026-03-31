@@ -351,7 +351,7 @@ for ((generation=1; generation<=generations; generation++)); do
   fi
   generation_start="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
   printf 'PSP %d/%d | running...%s\n' "$generation" "$generations" "$gen_log_note"
-  "${agent_command[@]}" < "$effective_plan" > "$gen_stdout_target"
+  "${agent_command[@]}" < "$effective_plan" > "$gen_stdout_target" 2>&1
   generation_end="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
   if [[ "$generation_end" == "$generation_start" ]]; then
     append_result "$generation" "no_commit" "-" "no new commit"
