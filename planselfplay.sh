@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PSP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 agent="codex"
 plan_path="${PWD}/plan.example.txt"
@@ -61,6 +63,28 @@ load_config() {
   done < "$cfg"
 }
 
+# Copy bundled skills to ~/.psp/skills/ (skips files that already exist).
+write_default_skills() {
+  local src_dir="$PSP_SCRIPT_DIR/skills"
+  local dst_dir="$PSP_DIR/skills"
+  [[ -d "$src_dir" ]] || { printf 'No bundled skills directory found at %s\n' "$src_dir" >&2; return 1; }
+  mkdir -p "$dst_dir"
+  local copied=0 name src dst
+  for src in "$src_dir"/*.md; do
+    [[ -e "$src" ]] || continue
+    name="${src##*/}"; dst="$dst_dir/$name"
+    if [[ -e "$dst" ]]; then
+      printf 'Skipping (already exists): %s\n' "$dst"
+    else
+      cp "$src" "$dst"
+      printf 'Installed: %s\n' "$dst"
+      (( ++copied )) || true
+    fi
+  done
+  (( copied > 0 )) && printf 'Installed %d skill(s) to %s\n' "$copied" "$dst_dir" \
+                   || printf 'All skills already installed in %s\n' "$dst_dir"
+}
+
 # Write a starter ~/.psp/config.toml (will not overwrite an existing file).
 write_default_config() {
   local cfg="$PSP_DIR/config.toml"
@@ -105,6 +129,7 @@ Options:
   --plan PATH, -p                    Plan file to replay
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.example.txt)
   --init-config                      Write a starter ~/.psp/config.toml and exit
+  --init-skills                      Install bundled skills into ~/.psp/skills/ and exit
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
   --generations N, -g                Positive integer (default: 10)
   --sleep SECONDS, -s                Non-negative delay between generations
@@ -123,6 +148,7 @@ Agent presets (overridable via --agent-args):
 
 Config:      ~/.psp/config.toml  (key = value defaults, lowest priority)
              ~/.psp/history      (append-only run log; browse with --history)
+             ~/.psp/skills/      (pre-installed skill files; injected into every plan)
 Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS SLEEP_SECONDS TIME_BUDGET STDOUT_MODE DRY_RUN
              (legacy: CODEX_BIN CODEX_ARGS map to AGENT_BIN AGENT_ARGS for codex)
 EOF
@@ -131,6 +157,16 @@ EOF
 # Built-in ML-style plan template; used when goal is piped via stdin and no --plan is given.
 # Update this function to change the default agent policy.
 builtin_plan_template() {
+  # Build the list of pre-installed skills from ~/.psp/skills/ to inject into the plan.
+  local psp_skills_note=""
+  if [[ -d "$PSP_DIR/skills" ]]; then
+    local -a _sf=()
+    while IFS= read -r _f; do _sf+=("$_f"); done < <(ls -1 "$PSP_DIR/skills"/*.md 2>/dev/null || true)
+    if (( ${#_sf[@]} > 0 )); then
+      psp_skills_note=$'\n  PSP pre-installed skills (also read these):\n'
+      for _f in "${_sf[@]}"; do psp_skills_note+="    $_f"$'\n'; done
+    fi
+  fi
   cat <<PLAN_TEMPLATE
 DOMAIN: the current working directory and its contents.
 
@@ -140,8 +176,7 @@ LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.
 
 LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes that seem relevant before changing anything so you extend the existing trajectory instead of restarting it.
 
-APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply relevant ones to your approach.
-
+APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply relevant ones to your approach.${psp_skills_note}
 DEAD ENDS: before designing, read FAILED_PATHS.md if it exists and never re-try any listed approach. When you abandon an approach, append it to FAILED_PATHS.md with a one-line reason.
 
 STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
@@ -181,6 +216,7 @@ while (( $# )); do
   case "$1" in
     -h|--help)       usage; exit 0 ;;
     --init-config)   write_default_config; exit $? ;;
+    --init-skills)   write_default_skills; exit $? ;;
     --history)
       [[ -f "$PSP_DIR/history" ]] || { printf 'No history yet.\n' >&2; exit 0; }
       cut -f5 "$PSP_DIR/history"; exit 0 ;;

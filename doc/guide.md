@@ -19,6 +19,8 @@ into another repo the same day.
 | `plan.example.txt` | Bundled example plan with all directives |
 | `~/.psp/config.toml` | User defaults (lowest priority) |
 | `~/.psp/history` | Append-only run log |
+| `~/.psp/skills/` | Pre-installed skills; injected into every plan |
+| `skills/` | Bundled skills shipped with PSP (source for `--init-skills`) |
 
 ---
 
@@ -63,6 +65,7 @@ Usage: psp [options] [plan-path]
       --yolo                          Skip permission prompts (use with care)
       --init-plan [PATH]              Write a starter plan file and exit
       --init-config                   Write ~/.psp/config.toml and exit
+      --init-skills                   Install bundled skills into ~/.psp/skills/ and exit
       --dry-run                       Print resolved command and exit
       --history                       Print past goals and exit
   -h, --help                          Show help
@@ -103,6 +106,39 @@ generations = 6
 # agent_args  = ""
 # yolo        = false
 ```
+
+---
+
+## Pre-installed skills (`~/.psp/skills/`)
+
+PSP ships a set of reusable skill files in its `skills/` directory. Installing them
+once makes them available to every project you run PSP in:
+
+```bash
+./psp --init-skills
+```
+
+This copies the bundled skills to `~/.psp/skills/`, skipping any that already exist.
+The paths are automatically injected into the `APPLY SKILLS` directive of every
+built-in plan, so the agent can read and apply them without any extra configuration.
+
+### Bundled skills
+
+| File | Purpose |
+| --- | --- |
+| `brainstorming.md` | Diverge/converge process for open-ended design decisions |
+| `document-writing.md` | Principles and structure for clear, concise documentation |
+
+### Adding your own
+
+Drop any `*.md` file into `~/.psp/skills/` and it will be picked up automatically.
+Follow the same format as the bundled skills: a short header explaining when to use
+the skill, then concrete, actionable rules.
+
+### Overriding a bundled skill
+
+`--init-skills` never overwrites existing files. Edit `~/.psp/skills/<name>.md`
+directly to customise a skill without losing your changes on the next install.
 
 ---
 
