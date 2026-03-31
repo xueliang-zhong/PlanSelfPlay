@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TextIO
 
 
 CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
@@ -261,8 +262,10 @@ def append_history(opts: Options, plan_display: str) -> None:
         handle.write(f"{timestamp}\t{opts.agent}\t{Path.cwd()}\tg={opts.generations}\t{goal_field}\n")
 
 
-def usage(prog: str) -> None:
-    sys.stdout.write(
+def usage(prog: str, *, stream: TextIO | None = None) -> None:
+    if stream is None:
+        stream = sys.stdout
+    stream.write(
         f"""Usage: {prog} [options] [plan-path]
        echo "GOAL" | {prog} [options]
 Replay a pure-text PLAN through a coding agent (codex, claude, or opencode).
@@ -389,7 +392,7 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
                 quit_with("Missing plan path after --")
             set_plan(opts, argv[index])
         elif current.startswith("-"):
-            usage(prog)
+            usage(prog, stream=sys.stderr)
             quit_with(f"Unknown option: {current}")
         else:
             set_plan(opts, current)

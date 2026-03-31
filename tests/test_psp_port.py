@@ -150,6 +150,9 @@ class PSPPortTests(unittest.TestCase):
     def test_opencode_yolo_warning_matches_shell(self) -> None:
         self.assert_parity(["--agent", "opencode", "--yolo", "--dry-run"], stdin="ship it\n")
 
+    def test_unknown_option_matches_shell(self) -> None:
+        self.assert_parity(["--wat"])
+
     def assert_parity(
         self,
         args: list[str],
