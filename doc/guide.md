@@ -18,8 +18,8 @@ git clone https://github.com/xueliang-zhong/PlanSelfPlay.git ~/PlanSelfPlay
 ```
 
 `--install` creates `~/.local/bin/psp`, adds a managed PATH block to
-`~/.zshrc` and `~/.bashrc`, and bootstraps `~/.psp/config.toml` plus bundled
-skills. Open a new shell and `psp` is ready from anywhere.
+`~/.zshrc` and `~/.bashrc`, and bootstraps `~/.psp/config.toml`. Open a new
+shell and `psp` is ready from anywhere.
 
 ---
 
@@ -31,8 +31,6 @@ skills. Open a new shell and `psp` is ready from anywhere.
 | `plan.template.txt` | Bundled starter plan with all directives |
 | `~/.psp/config.toml` | User defaults (lowest priority) |
 | `~/.psp/history` | Append-only run log |
-| `~/.psp/skills/` | Pre-installed skills; injected into every plan |
-| `skills/` | Bundled skills shipped with PSP (source for `--init-skills`) |
 
 ---
 
@@ -76,10 +74,9 @@ Usage: psp [options] [plan-path]
   -x, --agent-args STRING             Override full agent argument string
       --agent-bin PATH                Override agent executable
       --yolo                          Skip permission prompts (use with care)
-      --init                          Initialise all ~/.psp files (config + skills) and exit
+      --init                          Initialise ~/.psp/config.toml and exit
       --init-plan [PATH]              Write a starter plan file and exit
       --init-config                   Write ~/.psp/config.toml and exit
-      --init-skills                   Install bundled skills into ~/.psp/skills/ and exit
       --dry-run                       Print resolved command and exit
       --history                       Print past goals and exit
   -h, --help                          Show help
@@ -104,8 +101,8 @@ Override with `--agent-bin` / `--agent-args`, or env vars `AGENT_BIN` / `AGENT_A
 Bootstrap once, then edit:
 
 ```bash
-psp --install         # one-shot install + PATH + config + skills
-psp --init            # config + skills only
+psp --install         # one-shot install + PATH + config
+psp --init            # config only
 psp --init-config     # config only
 ```
 
@@ -122,41 +119,6 @@ generations = 6
 # agent_args  = ""
 # yolo        = false
 ```
-
----
-
-## Pre-installed skills (`~/.psp/skills/`)
-
-PSP ships a set of reusable skill files in its `skills/` directory. Installing them
-once makes them available to every project you run PSP in:
-
-```bash
-psp --init-skills
-```
-
-This copies the bundled skills to `~/.psp/skills/`, skipping any that already exist.
-The paths are automatically injected into the `APPLY SKILLS` directive of every
-built-in plan, so the agent can read and apply them without any extra configuration.
-
-### Bundled skills
-
-| File | Purpose |
-| --- | --- |
-| `brainstorming.md` | Diverge/converge process for open-ended design decisions |
-| `document-writing.md` | Principles and structure for clear, concise documentation |
-
-### Adding your own
-
-Drop any `*.md` file into `~/.psp/skills/` and it will be picked up automatically.
-Follow the same format as the bundled skills: a short header explaining when to use
-the skill, then concrete, actionable rules.
-
-### Overriding a bundled skill
-
-`--init-skills` never overwrites existing files. Edit `~/.psp/skills/<name>.md`
-directly to customise a skill without losing your changes on the next install.
-
----
 
 ## Run history
 

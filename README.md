@@ -12,8 +12,8 @@ git clone https://github.com/xueliang-zhong/PlanSelfPlay.git ~/PlanSelfPlay
 ```
 
 `psp --install` creates `~/.local/bin/psp`, adds a managed PATH block to
-`~/.zshrc` and `~/.bashrc`, and bootstraps `~/.psp/config.toml` plus bundled
-skills. Open a new shell and `psp` is ready to use from anywhere.
+`~/.zshrc` and `~/.bashrc`, and bootstraps `~/.psp/config.toml`. Open a new
+shell and `psp` is ready to use from anywhere.
 
 ## Usage
 
