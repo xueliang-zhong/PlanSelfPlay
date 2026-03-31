@@ -1,16 +1,19 @@
 # PlanSelfPlay
 
-One PLAN file. One shell loop. Visible agent self-improvement.
+A simple CLI for agent self-improvement loops.
 
 Works with **codex**, **claude**, and **opencode** out of the box.
 
-## Core idea
+## Core Idea
 
 ```bash
+GOAL="your optimisation goal"
 GENERATIONS=100
 for ((i=0; i<$GENERATIONS; i++)); do
-  echo -n "${i}/${GENERATIONS}: "
-  codex --full-auto exec - < SELF_IMPROVING_PLAN.txt
+  # Inject goal into a self improving plan template
+  sed "s/GOAL:.*/GOAL: $GOAL/" PLAN_TEMPLATE.txt > plan.txt
+  # Run agent - reads memory files from previous generations, writes new ones
+  codex --full-auto exec - < plan.txt
 done
 ```
 
