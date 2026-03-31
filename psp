@@ -277,7 +277,7 @@ while (( $# )); do
     --init-config)   write_default_config; exit $? ;;
     --history)
       [[ -f "$PSP_DIR/history" ]] || { printf 'No history yet.\n' >&2; exit 0; }
-      cut -f5 "$PSP_DIR/history"; exit 0 ;;
+      cut -f5 "$PSP_DIR/history" | awk '!seen[$0]++'; exit 0 ;;
     --dry-run)       dry_run=1 ;;
     -a|--agent)      agent="$(arg "$@")"; shift ;;
     -p|--plan)       set_plan "$(arg "$@")"; shift ;;

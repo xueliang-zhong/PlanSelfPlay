@@ -12,12 +12,12 @@ GENERATIONS=100
 for ((i=0; i<$GENERATIONS; i++)); do
   # Inject goal into a self improving plan template
   sed "s/GOAL:.*/GOAL: $GOAL/" PLAN_TEMPLATE.txt > plan.txt
-  # Run agent - reads memory files from previous generations, writes new ones
+  # Run agent - plan template instructs it to read memory from previous generations and write new ones
   codex --full-auto exec - < plan.txt
 done
 ```
 
-That's it. PSP wraps this loop with a [PLAN template](plan.template.txt), run history, per-generation logs, and support for codex, claude, and opencode.
+That's it. PSP wraps this loop with a self-improvement [PLAN template](plan.template.txt), goal and history management, and built-in presets for codex, claude, and opencode.
 
 ## Install
 
