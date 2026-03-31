@@ -51,7 +51,7 @@ append_result() {
 }
 
 # Load ~/.psp/config.toml — flat key = value, TOML subset.
-# Priority: defaults < config.toml < env vars < CLI flags.
+# Priority: defaults < config.toml < CLI flags.
 load_config() {
   local cfg="$PSP_DIR/config.toml"
   [[ -f "$cfg" ]] || return 0
@@ -83,7 +83,7 @@ write_default_config() {
   [[ -e "$cfg" ]] && { printf 'Config already exists: %s\n' "$cfg"; return 1; }
   cat > "$cfg" <<'TOML'
 # ~/.psp/config.toml — PSP user defaults
-# Priority: this file < environment variables < command-line flags
+# Priority: this file < command-line flags
 # All keys are optional; uncomment and edit the ones you want.
 
 # agent       = "codex"       # codex | claude | opencode
@@ -214,10 +214,8 @@ Agent presets (overridable via --agent-args):
   claude    -> claude -p -
   opencode  -> opencode run -
 
-Config:      ~/.psp/config.toml  (key = value defaults, lowest priority)
+Config:      ~/.psp/config.toml  (key = value defaults; CLI flags override)
              ~/.psp/history      (append-only run log; browse with --history)
-Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS SLEEP_SECONDS TIME_BUDGET OUTPUT_MODE DRY_RUN
-             (legacy: CODEX_BIN CODEX_ARGS map to AGENT_BIN AGENT_ARGS for codex)
 EOF
 }
 
@@ -258,16 +256,8 @@ CONSTRAINTS: work only inside this repo; never scan outside it; wrap every \`fin
 PLAN_TEMPLATE
 }
 
-# ── Config file then env vars (env vars win over config.toml) ─────────────────
+# ── Config file (lowest priority; CLI flags override) ─────────────────────────
 load_config
-agent="${AGENT:-$agent}"
-goal_text="${GOAL:-$goal_text}"
-generations="${GENERATIONS:-$generations}"
-sleep_seconds="${SLEEP_SECONDS:-$sleep_seconds}"
-time_budget="${TIME_BUDGET:-$time_budget}"
-output_mode="${OUTPUT_MODE:-$output_mode}"
-dry_run="${DRY_RUN:-$dry_run}"
-[[ -n "${PLAN_PATH:-}" ]] && { plan_path="$PLAN_PATH"; plan_explicit=1; }
 
 while (( $# )); do
   case "$1" in
