@@ -59,7 +59,7 @@ Usage: psp [options] [plan-path]
   -g, --generations N                 Generations to run (default: 10)
   -s, --sleep SECONDS                 Pause between generations (default: 2)
   -t, --time-budget SECONDS           Wall-clock cap; 0 = no limit
-  -o, --stdout discard|inherit|log    Agent stdout handling (log = per-generation files)
+  -o, --output discard|inherit|log    Agent output handling (log = per-generation files)
   -x, --agent-args STRING             Override full agent argument string
       --agent-bin PATH                Override agent executable
       --yolo                          Skip permission prompts (use with care)
@@ -101,7 +101,7 @@ agent       = "claude"    # codex | claude | opencode
 generations = 6
 # sleep       = 2
 # time_budget = 3600      # hard stop in seconds
-# stdout      = "discard" # discard | inherit
+# output      = "discard" # discard | inherit
 # agent_bin   = ""
 # agent_args  = ""
 # yolo        = false
@@ -215,7 +215,7 @@ you promote upward when a lesson earns wider reuse.
 **Start small.** Run `--generations 2` first to check the agent reads the plan
 and produces sensible output before committing to a long loop.
 
-**Watch live output.** Add `--stdout inherit` to print agent output to the
+**Watch live output.** Add `--output inherit` to print agent output to the
 terminal, useful when debugging a new plan.
 
 **Inspect the effective plan.** When a goal is piped in, a `plan.tmp.*` file is
@@ -238,7 +238,7 @@ throwaway branch first.
 
 ```bash
 for generation in 1..N:
-    run: agent < plan > stdout_target
+    run: agent < plan > output_target
     if HEAD advanced: record "committed" in results.tsv
     else:             record "no_commit"
     sleep between generations
@@ -259,7 +259,7 @@ PSP 2/9 | running...
 PSP 2/9 | no commit
 ```
 
-### `--stdout` modes
+### `--output` values
 
 | Value | Behaviour |
 | --- | --- |
@@ -267,7 +267,7 @@ PSP 2/9 | no commit
 | `inherit` | Agent output is printed to the terminal |
 | `log` | Each generation's output is saved to a file in `$PWD` |
 
-With `--stdout log`, a log file is created for each generation:
+With `--output log`, a log file is created for each generation:
 
 ```
 PSP 1/9 | running... → psp_codex_20260331T090000Z_gen01.log
@@ -275,7 +275,7 @@ PSP 1/9 | committed abc1234
 ```
 
 All logs from the same run share a timestamp prefix so they sort together.
-Set `stdout = "log"` in `~/.psp/config.toml` to make this the default.
+Set `output = "log"` in `~/.psp/config.toml` to make this the default.
 
 ---
 
