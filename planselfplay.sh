@@ -9,7 +9,6 @@ agent_bin=""
 agent_args_text=""
 goal_text=""
 generations="10"
-population="1"
 sleep_seconds="2"
 time_budget="0"
 stdout_mode="discard"
@@ -21,44 +20,21 @@ results_path=""
 PSP_DIR="${PSP_DIR:-${HOME}/.psp}"
 
 quit()    { printf '%s\n' "$*" >&2; exit 1; }
-arg() { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
-set_plan() { (( plan_seen == 0 )) || quit "Provide the plan path once"; plan_seen=1; plan_explicit=1; plan_path="$1"; }
+arg()     { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
+set_plan(){ (( plan_seen == 0 )) || quit "Provide the plan path once"; plan_seen=1; plan_explicit=1; plan_path="$1"; }
+
 ensure_results_ledger() {
   [[ -n "$results_path" ]] || return 0
-  if [[ ! -e "$results_path" ]]; then
-    printf 'timestamp_utc\tgeneration\tmember\tstatus\tcommit\tnote\n' > "$results_path"
-  fi
+  [[ -e "$results_path" ]] || printf 'timestamp_utc\tgeneration\tstatus\tcommit\tnote\n' > "$results_path"
 }
 append_result() {
   [[ -n "$results_path" ]] || return 0
-  local generation="$1" member="$2" status="$3" commit="$4" note="$5" timestamp
+  local generation="$1" status="$2" commit="$3" note="$4" timestamp
   ensure_results_ledger
   timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$timestamp" "$generation" "$member" "$status" "${commit:--}" "$note" >> "$results_path"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$timestamp" "$generation" "$status" "${commit:--}" "$note" >> "$results_path"
 }
-archive_parallel_branch() {
-  local branch="$1" timestamp backup_branch
-  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  backup_branch="psp/stale/${timestamp}-${branch#psp/}"
-  git show-ref --verify --quiet "refs/heads/$backup_branch" && backup_branch="${backup_branch}-$$"
-  git branch -m "$branch" "$backup_branch" >/dev/null 2>&1 \
-    || quit "Could not archive stale parallel branch: $branch"
-  printf 'PSP | preserved stale branch as %s\n' "$backup_branch"
-}
-prepare_parallel_slot() {
-  local branch="$1" path="$2" ahead=0
-  git worktree remove --force "$path" 2>/dev/null || true
-  if git show-ref --verify --quiet "refs/heads/$branch"; then
-    ahead=$(git rev-list HEAD.."$branch" --count 2>/dev/null || echo 0)
-    if (( ahead > 0 )); then
-      archive_parallel_branch "$branch"
-      return
-    fi
-    git branch -D "$branch" >/dev/null 2>&1 \
-      || quit "Could not clear stale parallel branch: $branch"
-  fi
-}
+
 # Load ~/.psp/config.toml — flat key = value, TOML subset.
 # Priority: defaults < config.toml < env vars < CLI flags.
 load_config() {
@@ -66,19 +42,15 @@ load_config() {
   [[ -f "$cfg" ]] || return 0
   local line key val
   while IFS= read -r line || [[ -n "$line" ]]; do
-    # skip blank lines, comments, section headers
     [[ "$line" =~ ^[[:space:]]*(#|$|\[) ]] && continue
     [[ "$line" =~ ^[[:space:]]*([a-zA-Z_][a-zA-Z0-9_-]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]] || continue
-    key="${BASH_REMATCH[1]}"
-    val="${BASH_REMATCH[2]}"
-    # strip surrounding quotes (single or double)
-    if [[ "$val" == \"*\" ]]; then val="${val#\"}"; val="${val%\"}";
+    key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
+    if   [[ "$val" == \"*\" ]]; then val="${val#\"}"; val="${val%\"}";
     elif [[ "$val" == \'*\' ]]; then val="${val#\'}"; val="${val%\'}";
-    else val="${val%%  #*}"; val="${val%[[:space:]]}"; fi  # strip unquoted inline comment
+    else val="${val%%  #*}"; val="${val%[[:space:]]}"; fi
     case "$key" in
       agent)        agent="$val" ;;
       generations)  generations="$val" ;;
-      population)   population="$val" ;;
       sleep)        sleep_seconds="$val" ;;
       time_budget)  time_budget="$val" ;;
       stdout)       stdout_mode="$val" ;;
@@ -101,7 +73,6 @@ write_default_config() {
 
 # agent       = "codex"       # codex | claude | opencode
 # generations = 10            # number of self-play generations
-# population  = 1             # parallel agents per generation (-j)
 # sleep       = 2             # seconds to pause between generations
 # time_budget = 0             # wall-clock cap in seconds (0 = no limit)
 # stdout      = "discard"     # discard | inherit  (agent output)
@@ -115,9 +86,9 @@ TOML
 # Append one line to ~/.psp/history per run.
 append_history() {
   mkdir -p "$PSP_DIR"
-  printf '%s\t%s\t%s\tg=%s\tj=%s\t%s\n' \
+  printf '%s\t%s\t%s\tg=%s\t%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "$agent" "$PWD" "$generations" "$population" \
+    "$agent" "$PWD" "$generations" \
     "${goal_text:-(plan: ${plan_display})}" \
     >> "$PSP_DIR/history"
 }
@@ -136,7 +107,6 @@ Options:
   --init-config                      Write a starter ~/.psp/config.toml and exit
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
   --generations N, -g                Positive integer (default: 10)
-  --population N, -jN                Parallel agents per generation (default: 1)
   --sleep SECONDS, -s                Non-negative delay between generations
   --time-budget SECONDS, -t          Stop after this many wall-clock seconds (0 = no limit)
   --stdout discard|inherit, -o       Agent stdout handling
@@ -153,7 +123,7 @@ Agent presets (overridable via --agent-args):
 
 Config:      ~/.psp/config.toml  (key = value defaults, lowest priority)
              ~/.psp/history      (append-only run log; browse with --history)
-Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS POPULATION SLEEP_SECONDS TIME_BUDGET STDOUT_MODE DRY_RUN
+Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS SLEEP_SECONDS TIME_BUDGET STDOUT_MODE DRY_RUN
              (legacy: CODEX_BIN CODEX_ARGS map to AGENT_BIN AGENT_ARGS for codex)
 EOF
 }
@@ -180,7 +150,7 @@ RETHINK: after the first design, pause and say exactly "Wait, let me rethink, ho
 
 AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
 
-RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, member, status, commit, and note.
+RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, status, commit, and note.
 
 UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
 
@@ -201,7 +171,6 @@ load_config
 agent="${AGENT:-$agent}"
 goal_text="${GOAL:-$goal_text}"
 generations="${GENERATIONS:-$generations}"
-population="${POPULATION:-$population}"
 sleep_seconds="${SLEEP_SECONDS:-$sleep_seconds}"
 time_budget="${TIME_BUDGET:-$time_budget}"
 stdout_mode="${STDOUT_MODE:-$stdout_mode}"
@@ -210,36 +179,28 @@ dry_run="${DRY_RUN:-$dry_run}"
 
 while (( $# )); do
   case "$1" in
-    -h|--help)    usage; exit 0 ;;
-    --init-config) write_default_config; exit $? ;;
+    -h|--help)       usage; exit 0 ;;
+    --init-config)   write_default_config; exit $? ;;
     --history)
       [[ -f "$PSP_DIR/history" ]] || { printf 'No history yet.\n' >&2; exit 0; }
-      cut -f6 "$PSP_DIR/history"; exit 0 ;;
-    --dry-run)    dry_run=1 ;;
+      cut -f5 "$PSP_DIR/history"; exit 0 ;;
+    --dry-run)       dry_run=1 ;;
     -a|--agent)      agent="$(arg "$@")"; shift ;;
     -p|--plan)       set_plan "$(arg "$@")"; shift ;;
     -i|--init-plan)
-      if [[ $# -ge 2 && "${2:-}" != -* ]]; then
-        init_plan_path="$2"
-        shift
-      else
-        init_plan_path="plan.example.txt"
-      fi
-      ;;
-    --yolo)       yolo_mode=1 ;;
+      if [[ $# -ge 2 && "${2:-}" != -* ]]; then init_plan_path="$2"; shift
+      else init_plan_path="plan.example.txt"; fi ;;
+    --yolo)          yolo_mode=1 ;;
     -g|--generations) generations="$(arg "$@")"; shift ;;
-    -g*)           generations="${1#-g}" ;;
-    --population)  population="$(arg "$@")"; shift ;;
-    -j)            population="$(arg "$@")"; shift ;;
-    -j*)           population="${1#-j}" ;;
+    -g*)             generations="${1#-g}" ;;
     -s|--sleep)      sleep_seconds="$(arg "$@")"; shift ;;
     -t|--time-budget) time_budget="$(arg "$@")"; shift ;;
     -o|--stdout)     stdout_mode="$(arg "$@")"; shift ;;
-    --agent-bin|--codex-bin)  agent_bin="$(arg "$@")"; shift ;;
+    --agent-bin|--codex-bin)      agent_bin="$(arg "$@")"; shift ;;
     -x|--agent-args|--codex-args) agent_args_text="$(arg "$@")"; shift ;;
     --) shift; (( $# )) || quit "Missing plan path after --"; set_plan "$1" ;;
     -*) usage >&2; quit "Unknown option: $1" ;;
-    *) set_plan "$1" ;;
+    *)  set_plan "$1" ;;
   esac
   shift
 done
@@ -249,9 +210,8 @@ done
 #   Interactive: ./psp with no plan/goal      — show "Goal: " prompt
 if [[ ! -t 0 ]]; then
   stdin_goal=$(cat)
-  # If the line looks like a history entry (psp --history | fzf | psp),
-  # extract the goal from the last tab-separated field.
-  if [[ "$stdin_goal" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'\t'[^$'\t']*$'\t'[^$'\t']*$'\t'g=[^$'\t']*$'\t'j=[^$'\t']*$'\t'(.*) ]]; then
+  # If it looks like a history entry, extract the goal (last field).
+  if [[ "$stdin_goal" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'\t'[^$'\t']*$'\t'[^$'\t']*$'\t'g=[^$'\t']*$'\t'(.*) ]]; then
     stdin_goal="${BASH_REMATCH[1]}"
   fi
   [[ -n "$stdin_goal" ]] && goal_text="$stdin_goal"
@@ -262,9 +222,7 @@ elif [[ -z "$goal_text" && "$plan_explicit" == 0 ]]; then
 fi
 
 if [[ -n "$init_plan_path" ]]; then
-  if [[ -e "$init_plan_path" ]]; then
-    quit "Refusing to overwrite existing file: $init_plan_path"
-  fi
+  [[ -e "$init_plan_path" ]] && quit "Refusing to overwrite existing file: $init_plan_path"
   builtin_plan_template "describe the improvement you want here" > "$init_plan_path"
   printf 'Wrote starter plan to %s\n' "$init_plan_path"
   exit 0
@@ -273,97 +231,66 @@ fi
 # Apply agent presets (explicit --agent-bin / --agent-args flags take precedence)
 case "$agent" in
   codex)
-    [[ -n "$agent_bin" ]]       || agent_bin="${AGENT_BIN:-${CODEX_BIN:-codex}}"
+    [[ -n "$agent_bin" ]] || agent_bin="${AGENT_BIN:-${CODEX_BIN:-codex}}"
     if [[ -z "$agent_args_text" ]]; then
-      if (( yolo_mode == 1 )); then
-        agent_args_text="--yolo exec -"
-      else
-        agent_args_text="${AGENT_ARGS:-${CODEX_ARGS:---full-auto exec -}}"
-      fi
-    fi
-    ;;
+      (( yolo_mode )) && agent_args_text="--yolo exec -" \
+                      || agent_args_text="${AGENT_ARGS:-${CODEX_ARGS:---full-auto exec -}}"
+    fi ;;
   claude)
-    [[ -n "$agent_bin" ]]       || agent_bin="${AGENT_BIN:-claude}"
+    [[ -n "$agent_bin" ]] || agent_bin="${AGENT_BIN:-claude}"
     if [[ -z "$agent_args_text" ]]; then
-      if (( yolo_mode == 1 )); then
-        agent_args_text="-p --dangerously-skip-permissions -"
-      else
-        agent_args_text="${AGENT_ARGS:--p -}"
-      fi
-    fi
-    ;;
+      (( yolo_mode )) && agent_args_text="-p --dangerously-skip-permissions -" \
+                      || agent_args_text="${AGENT_ARGS:--p -}"
+    fi ;;
   opencode)
-    [[ -n "$agent_bin" ]]       || agent_bin="${AGENT_BIN:-opencode}"
-    if [[ -z "$agent_args_text" ]]; then
-      agent_args_text="${AGENT_ARGS:-run -}"
-    fi
-    if (( yolo_mode == 1 )); then
-      printf '%s\n' "PSP WARNING | --yolo is not supported for opencode; continuing with the normal preset" >&2
-    fi
-    ;;
+    [[ -n "$agent_bin" ]] || agent_bin="${AGENT_BIN:-opencode}"
+    [[ -z "$agent_args_text" ]] && agent_args_text="${AGENT_ARGS:-run -}"
+    (( yolo_mode )) && printf 'PSP WARNING | --yolo is not supported for opencode; ignored\n' >&2 ;;
   *) quit "Unknown agent: $agent. Valid values: codex, claude, opencode" ;;
 esac
 
-# Skip plan-file validation when stdin supplies the goal and no explicit --plan was given
+# Validate
 if [[ -z "$goal_text" || "$plan_explicit" == 1 ]]; then
   [[ -n "$plan_path" && -r "$plan_path" ]] || quit "Plan file is not readable: $plan_path"
 fi
-[[ "$generations" =~ ^[1-9][0-9]*$ ]] || quit "GENERATIONS must be a positive integer: $generations"
-[[ "$population" =~ ^[1-9][0-9]*$ ]] || quit "POPULATION must be a positive integer: $population"
-[[ "$sleep_seconds" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]] || quit "SLEEP_SECONDS must be a non-negative number: $sleep_seconds"
-[[ "$time_budget" =~ ^[0-9]+$ ]] || quit "TIME_BUDGET must be a non-negative integer (seconds): $time_budget"
-[[ "$dry_run" =~ ^[01]$ ]] || quit "DRY_RUN must be 0 or 1: $dry_run"
-[[ "$stdout_mode" == discard || "$stdout_mode" == inherit ]] || quit "STDOUT_MODE must be 'discard' or 'inherit': $stdout_mode"
-stdout_target=/dev/null
-[[ "$stdout_mode" == inherit ]] && stdout_target=/dev/stdout
-agent_args=()
-[[ -n "$agent_args_text" ]] && read -r -a agent_args <<< "$agent_args_text"
+[[ "$generations"   =~ ^[1-9][0-9]*$ ]]                        || quit "GENERATIONS must be a positive integer: $generations"
+[[ "$sleep_seconds" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]]    || quit "SLEEP_SECONDS must be a non-negative number: $sleep_seconds"
+[[ "$time_budget"   =~ ^[0-9]+$ ]]                             || quit "TIME_BUDGET must be a non-negative integer (seconds): $time_budget"
+[[ "$dry_run"       =~ ^[01]$ ]]                               || quit "DRY_RUN must be 0 or 1: $dry_run"
+[[ "$stdout_mode" == discard || "$stdout_mode" == inherit ]]    || quit "STDOUT_MODE must be 'discard' or 'inherit': $stdout_mode"
+stdout_target=/dev/null; [[ "$stdout_mode" == inherit ]] && stdout_target=/dev/stdout
+agent_args=(); [[ -n "$agent_args_text" ]] && read -r -a agent_args <<< "$agent_args_text"
 agent_command=("$agent_bin" "${agent_args[@]}")
 
 plan_display="$plan_path"
 [[ -n "$goal_text" && "$plan_explicit" == 0 ]] && plan_display="(builtin)"
-printf 'PSP CONFIG | agent=%s | plan=%s | goal=%s | generations=%s | population=%s | sleep=%s | budget=%s | stdout=%s | bin=%s | args=%s\n' \
-  "$agent" "$plan_display" "${goal_text:-(none)}" "$generations" "$population" "$sleep_seconds" "${time_budget}s" "$stdout_mode" "$agent_bin" "$agent_args_text"
+printf 'PSP CONFIG | agent=%s | plan=%s | goal=%s | generations=%s | sleep=%s | budget=%s | stdout=%s | bin=%s | args=%s\n' \
+  "$agent" "$plan_display" "${goal_text:-(none)}" "$generations" "$sleep_seconds" "${time_budget}s" "$stdout_mode" "$agent_bin" "$agent_args_text"
 if [[ "$dry_run" == 1 ]]; then
   printf 'PSP DRY RUN |'; printf ' %q' "${agent_command[@]}"
   [[ "$plan_display" == "(builtin)" ]] && printf ' < <(builtin_plan_template %q)\n' "$goal_text" \
-    || printf ' < %q\n' "$plan_path"
+                                       || printf ' < %q\n' "$plan_path"
   exit 0
 fi
 
 command -v "$agent_bin" >/dev/null 2>&1 || quit "Required command not found on PATH: $agent_bin"
-
-# Resolve plan_path to absolute so agents running in worktrees can still read it
 [[ "$plan_path" = /* ]] || plan_path="${PWD}/${plan_path}"
 
 tmp_plan=""
 effective_plan="$plan_path"
 if [[ -n "$goal_text" && "$plan_explicit" == 0 ]]; then
-  # No explicit plan: generate from the built-in ML-style template
   tmp_plan=$(mktemp "${PWD}/plan.tmp.XXXXXX")
   builtin_plan_template "$goal_text" > "$tmp_plan"
   effective_plan="$tmp_plan"
 elif [[ -n "$goal_text" ]]; then
-  # Explicit plan: substitute the GOAL: line
   tmp_plan=$(mktemp "${PWD}/$(basename "${plan_path%.*}").tmp.XXXXXX")
   awk -v goal="$goal_text" '/^GOAL:/{print "GOAL: " goal; next} {print}' "$plan_path" > "$tmp_plan"
   effective_plan="$tmp_plan"
 fi
 
-repo_root=""
-if (( population > 1 )); then
-  git rev-parse --git-dir >/dev/null 2>&1 \
-    || quit "POPULATION > 1 requires a git repository; use -j1 outside git repos"
-  repo_root=$(git rev-parse --show-toplevel)
-fi
-if [[ -n "$repo_root" ]]; then
-  results_path="${repo_root}/results.tsv"
-else
-  results_path="${PWD}/results.tsv"
-fi
+results_path="${PWD}/results.tsv"
 ensure_results_ledger
-
-trap '[[ -n "$tmp_plan" ]] && rm -f "$tmp_plan"; [[ -n "$repo_root" ]] && { git worktree prune -q 2>/dev/null || true; rm -rf "${repo_root}/.psp"; }' EXIT
+trap '[[ -n "$tmp_plan" ]] && rm -f "$tmp_plan"' EXIT
 
 append_history
 psp_start_time=$SECONDS
@@ -374,102 +301,14 @@ for ((generation=1; generation<=generations; generation++)); do
     break
   fi
   generation_start="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
-  pids=()
-  for ((member=1; member<=population; member++)); do
-    printf 'PSP %d/%d [%d/%d] | agent=%s | plan=%s | bin=%s | args=%s\n' \
-      "$generation" "$generations" "$member" "$population" "$agent" "$plan_display" "$agent_bin" "$agent_args_text"
-    if (( population > 1 )); then
-      wt_branch="psp/gen${generation}-m${member}"
-      wt_path="${repo_root}/.psp/gen${generation}-m${member}"
-      prepare_parallel_slot "$wt_branch" "$wt_path"
-      git worktree add -q -b "$wt_branch" "$wt_path" HEAD
-      (cd "$wt_path" && "${agent_command[@]}" < "$effective_plan" > "$stdout_target") &
-    else
-      "${agent_command[@]}" < "$effective_plan" > "$stdout_target" &
-    fi
-    pids+=($!)
-  done
-  for pid in "${pids[@]}"; do wait "$pid"; done
-  if (( population > 1 )); then
-    # Remove worktree paths first so branches are free to merge
-    for ((member=1; member<=population; member++)); do
-      git worktree remove --force "${repo_root}/.psp/gen${generation}-m${member}" 2>/dev/null || true
-    done
-    # Collect branches that produced new commits
-    active_branches=()
-    for ((member=1; member<=population; member++)); do
-      wt_branch="psp/gen${generation}-m${member}"
-      new_commits=$(git rev-list HEAD.."${wt_branch}" --count 2>/dev/null || echo 0)
-      if (( new_commits > 0 )); then
-        active_branches+=("$wt_branch")
-      else
-        printf 'PSP %d/%d [%d/%d] | no new commits\n' \
-          "$generation" "$generations" "$member" "$population"
-        append_result "$generation" "$member" "no_commit" "-" "no new commits"
-        git branch -D "${wt_branch}" 2>/dev/null || true
-      fi
-    done
-    if (( ${#active_branches[@]} == 0 )); then
-      printf 'PSP %d/%d | no members produced commits\n' "$generation" "$generations"
-    elif (( ${#active_branches[@]} > 1 )) && \
-         git merge --no-ff -m "psp: octopus merge gen${generation} [$(IFS=,; echo "${active_branches[*]/#*-/}")]" "${active_branches[@]}" >/dev/null 2>&1; then
-      # Tier 1: octopus merge — all branches, no conflicts
-      printf 'PSP %d/%d | octopus: merged all %d active branches\n' \
-        "$generation" "$generations" "${#active_branches[@]}"
-      for wt_branch in "${active_branches[@]}"; do
-        member_num="${wt_branch##*-m}"
-        member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
-        append_result "$generation" "$member_num" "merged_octopus" "$member_head" "merged via octopus"
-        git branch -D "${wt_branch}" 2>/dev/null || true
-      done
-    else
-      git merge --abort 2>/dev/null || true
-      # Tier 2: sequential per-branch merge, with -X ours fallback (Tier 3) on conflict
-      for wt_branch in "${active_branches[@]}"; do
-        member_num="${wt_branch##*-m}"
-        new_commits=$(git rev-list HEAD.."${wt_branch}" --count 2>/dev/null || echo 0)
-        if (( new_commits == 0 )); then
-          git branch -D "${wt_branch}" 2>/dev/null || true
-        elif git merge --no-ff -m "psp: merge [psp:gen${generation}-m${member_num}]" "${wt_branch}" >/dev/null 2>&1; then
-          printf 'PSP %d/%d [%d/%d] | merged %d commit(s)\n' \
-            "$generation" "$generations" "$member_num" "$population" "$new_commits"
-          member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
-          append_result "$generation" "$member_num" "merged" "$member_head" "merged ${new_commits} commit(s)"
-          git branch -D "${wt_branch}" 2>/dev/null || true
-        else
-          git merge --abort 2>/dev/null || true
-          if git merge --no-ff -m "psp: partial merge [psp:gen${generation}-m${member_num}] (-X ours)" -X ours "${wt_branch}" >/dev/null 2>&1; then
-            # Tier 3: ours strategy — non-conflicting hunks taken, main wins conflicts
-            printf 'PSP %d/%d [%d/%d] | partial merge (-X ours, %d commit(s))\n' \
-              "$generation" "$generations" "$member_num" "$population" "$new_commits"
-            member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
-            append_result "$generation" "$member_num" "partial_merge" "$member_head" "merged with -X ours (${new_commits} commit(s))"
-            git branch -D "${wt_branch}" 2>/dev/null || true
-          else
-            git merge --abort 2>/dev/null || true
-            # Last resort: rescue knowledge artifacts
-            printf 'PSP %d/%d [%d/%d] | conflict, rescuing memory (branch kept: %s)\n' \
-              "$generation" "$generations" "$member_num" "$population" "${wt_branch}"
-            while IFS= read -r f; do
-              [[ -z "$f" ]] && continue
-              git show "${wt_branch}:${f}" > "${repo_root}/${f}" 2>/dev/null || true
-            done < <(git diff --name-only HEAD "${wt_branch}" -- 'agent_*.md' 'skill_*.md' 'FAILED_PATHS.md' 'CURRENT_MEMORY.md' 2>/dev/null)
-            git add -- 'agent_*.md' 'skill_*.md' 'FAILED_PATHS.md' 'CURRENT_MEMORY.md' 2>/dev/null || true
-            git diff --cached --quiet \
-              || git commit -m "psp: rescue knowledge artifacts from gen${generation}-m${member_num} (conflict)"
-            member_head="$(git rev-parse "${wt_branch}" 2>/dev/null || printf '-')"
-            append_result "$generation" "$member_num" "rescued" "$member_head" "code conflict; rescued knowledge artifacts"
-          fi
-        fi
-      done
-    fi
+  printf 'PSP %d/%d | agent=%s | plan=%s | bin=%s | args=%s\n' \
+    "$generation" "$generations" "$agent" "$plan_display" "$agent_bin" "$agent_args_text"
+  "${agent_command[@]}" < "$effective_plan" > "$stdout_target"
+  generation_end="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
+  if [[ "$generation_end" == "$generation_start" ]]; then
+    append_result "$generation" "no_commit" "-" "no new commit"
   else
-    generation_end="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
-    if [[ "$generation_end" == "$generation_start" ]]; then
-      append_result "$generation" "1" "no_commit" "-" "no new commit"
-    else
-      append_result "$generation" "1" "committed" "$generation_end" "HEAD advanced this generation"
-    fi
+    append_result "$generation" "committed" "$generation_end" "HEAD advanced"
   fi
-  if (( generation < generations )); then sleep "$sleep_seconds"; fi
+  (( generation < generations )) && sleep "$sleep_seconds"
 done

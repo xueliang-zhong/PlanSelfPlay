@@ -47,9 +47,6 @@ echo "maximise function-level test coverage" | ./psp
 # Run your own plan for 6 generations
 ./psp -p plan.txt -g6
 
-# Run 3 agents per generation in parallel
-./psp -p plan.txt -g6 -j3
-
 # Run with a time budget instead of fixed generations
 echo "reduce lines of code" | ./psp -t 3600
 
@@ -198,7 +195,6 @@ Bootstrap once with `./psp --init-config`, then uncomment and edit the keys you 
 ```toml
 agent       = "claude"   # default agent for every run
 generations = 6          # shorter loops by default
-# population  = 2        # run two agents per generation
 # time_budget = 3600     # hard stop after 1 hour
 ```
 
@@ -225,7 +221,7 @@ The file is never written automatically — only `--init-config` touches it.
 echo "reduce lines of code" | ./psp --time-budget 3600   # stop after 1 hour
 ```
 
-**💸 Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement. With `-jN`, each generation multiplies token spend by N, so start with `-j2` before going wider.
+**💸 Token budget.** Long runs with capable models burn tokens quickly. Set `--generations` conservatively (6–10) and increase only when earlier generations show consistent improvement.
 
 **⚠️ Unblocking agents (use with caution).** When system restrictions or access controls prevent the agent from proceeding, `--yolo` selects the unsafe preset for supported agents:
 
@@ -248,13 +244,9 @@ echo "reduce lines of code" | ./psp --time-budget 3600   # stop after 1 hour
 
 **🧠 Current memory (`CURRENT_MEMORY.md`).** Use this as the compact front door for repo-specific lessons that should help the next few generations. Keep it short and curated. Timestamped `agent_*.md` files remain the detailed timeline; `CURRENT_MEMORY.md` is the active summary layer that future runs should read first.
 
-**🛠️ Skills (`skill_*.md`).** Promote a lesson into a skill only when it is reusable, concrete, and likely to help many future runs, not when it is just a one-off repo quirk or a trick that worked once. Patch an existing skill when refining the same technique; create a new skill only for a genuinely different technique. Keep each skill short, actionable, and low-duplication. Future generations read all `skill_*.md` files at the start of each run via `APPLY SKILLS` and build on accumulated know-how rather than re-deriving it. Skills are tracked in git like any other file. In `-jN` mode, skill files are rescued alongside `agent_*.md` memory files even when code conflicts prevent a full merge.
+**🛠️ Skills (`skill_*.md`).** Promote a lesson into a skill only when it is reusable, concrete, and likely to help many future runs, not when it is just a one-off repo quirk or a trick that worked once. Patch an existing skill when refining the same technique; create a new skill only for a genuinely different technique. Keep each skill short, actionable, and low-duplication. Future generations read all `skill_*.md` files at the start of each run via `APPLY SKILLS` and build on accumulated know-how rather than re-deriving it. Skills are tracked in git like any other file.
 
-**📒 Results ledger (`results.tsv`).** The runner maintains a tab-separated ledger with `timestamp_utc`, `generation`, `member`, `status`, `commit`, and `note`. This keeps the run history machine-friendly without hiding it behind a database. Use it as the compact audit trail; keep richer explanations in memory files.
-
-### Parallelism
-
-**⚡ Population (`-jN`).** Runs N agents in parallel per generation. Each member gets its own git worktree and branch so agents never race. After all members finish, their work is automatically merged back into the main branch using a three-tier cascade: (1) octopus merge when all branches are conflict-free, (2) sequential per-branch merge otherwise, (3) `-X ours` fallback for stubborn conflicts. Knowledge artifacts such as `agent_*.md`, `CURRENT_MEMORY.md`, `skill_*.md`, and `FAILED_PATHS.md` are always rescued and committed even when code conflicts prevent a full merge. Branches that produced no commits are dropped silently.
+**📒 Results ledger (`results.tsv`).** The runner maintains a tab-separated ledger with `timestamp_utc`, `generation`, `status`, `commit`, and `note`. This keeps the run history machine-friendly without hiding it behind a database. Use it as the compact audit trail; keep richer explanations in memory files.
 
 ## Inspiration
 
