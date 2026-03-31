@@ -1,13 +1,12 @@
 DOMAIN: the current working directory and its contents.
 
-GOAL: Minimise total lines of code (LOC) across the repository, while every feature available before the run MUST still work after it.
+GOAL: reduce the LOC of this project while maintaining same feature parity and quality.
 
 LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.
 
 LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes that seem relevant before changing anything so you extend the existing trajectory instead of restarting it.
 
 APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply relevant ones to your approach.
-
 DEAD ENDS: before designing, read FAILED_PATHS.md if it exists and never re-try any listed approach. When you abandon an approach, append it to FAILED_PATHS.md with a one-line reason.
 
 STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
@@ -16,7 +15,7 @@ RETHINK: after the first design, pause and say exactly "Wait, let me rethink, ho
 
 AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
 
-RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, member, status, commit, and note.
+RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, status, commit, and note.
 
 UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
 

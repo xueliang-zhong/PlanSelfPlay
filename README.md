@@ -4,6 +4,18 @@ One PLAN file. One shell loop. Visible agent self-improvement.
 
 Works with **codex**, **claude**, and **opencode** out of the box.
 
+## Core idea
+
+```bash
+GENERATIONS=100
+for ((i=0; i<$GENERATIONS; i++)); do
+  echo -n "${i}/${GENERATIONS}: "
+  codex --full-auto exec - < SELF_IMPROVING_PLAN.txt
+done
+```
+
+That's it. PSP wraps this loop with a PLAN template, run history, per-generation logs, and support for codex, claude, and opencode.
+
 ## Install
 
 ```bash
