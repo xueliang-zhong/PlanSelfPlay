@@ -99,7 +99,7 @@ write_default_config() {
 # generations = 10            # number of self-play generations
 # sleep       = 2             # seconds to pause between generations
 # time_budget = 0             # wall-clock cap in seconds (0 = no limit)
-# stdout      = "discard"     # discard | inherit  (agent output)
+# stdout      = "discard"     # discard | inherit | log  (log = per-generation files in $PWD)
 # agent_bin   = ""            # override the agent executable path
 # agent_args  = ""            # override the full agent argument string
 # yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
@@ -134,7 +134,7 @@ Options:
   --generations N, -g                Positive integer (default: 10)
   --sleep SECONDS, -s                Non-negative delay between generations
   --time-budget SECONDS, -t          Stop after this many wall-clock seconds (0 = no limit)
-  --stdout discard|inherit, -o       Agent stdout handling
+  --stdout discard|inherit|log, -o   Agent stdout handling (log = per-generation files)
   --agent-bin PATH                   Agent executable override
   --agent-args STRING, -x            Full agent args override (replaces preset defaults)
   --dry-run                          Print the resolved command and exit
@@ -293,15 +293,16 @@ fi
 [[ "$sleep_seconds" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]]    || quit "SLEEP_SECONDS must be a non-negative number: $sleep_seconds"
 [[ "$time_budget"   =~ ^[0-9]+$ ]]                             || quit "TIME_BUDGET must be a non-negative integer (seconds): $time_budget"
 [[ "$dry_run"       =~ ^[01]$ ]]                               || quit "DRY_RUN must be 0 or 1: $dry_run"
-[[ "$stdout_mode" == discard || "$stdout_mode" == inherit ]]    || quit "STDOUT_MODE must be 'discard' or 'inherit': $stdout_mode"
+[[ "$stdout_mode" == discard || "$stdout_mode" == inherit || "$stdout_mode" == log ]] \
+  || quit "STDOUT_MODE must be 'discard', 'inherit', or 'log': $stdout_mode"
 stdout_target=/dev/null; [[ "$stdout_mode" == inherit ]] && stdout_target=/dev/stdout
 agent_args=(); [[ -n "$agent_args_text" ]] && read -r -a agent_args <<< "$agent_args_text"
 agent_command=("$agent_bin" "${agent_args[@]}")
 
 plan_display="$plan_path"
 [[ -n "$goal_text" && "$plan_explicit" == 0 ]] && plan_display="(builtin)"
-printf 'PSP CONFIG | agent=%s | plan=%s | goal=%s | generations=%s | sleep=%s | budget=%s | stdout=%s | bin=%s | args=%s\n' \
-  "$agent" "$plan_display" "${goal_text:-(none)}" "$generations" "$sleep_seconds" "${time_budget}s" "$stdout_mode" "$agent_bin" "$agent_args_text"
+printf 'PSP Step | plan: %s | goal: %s | agent: %s | generations: %s\n' \
+  "$plan_display" "${goal_text:-(none)}" "$agent" "$generations"
 if [[ "$dry_run" == 1 ]]; then
   printf 'PSP DRY RUN |'; printf ' %q' "${agent_command[@]}"
   [[ "$plan_display" == "(builtin)" ]] && printf ' < <(builtin_plan_template %q)\n' "$goal_text" \
@@ -328,6 +329,10 @@ results_path="${PWD}/results.tsv"
 ensure_results_ledger
 trap '[[ -n "$tmp_plan" ]] && rm -f "$tmp_plan"' EXIT
 
+# For --stdout log: fix a single run timestamp shared across all generation logs.
+run_ts=""
+[[ "$stdout_mode" == log ]] && run_ts="$(date -u +%Y%m%dT%H%M%SZ)"
+
 append_history
 psp_start_time=$SECONDS
 for ((generation=1; generation<=generations; generation++)); do
@@ -336,15 +341,24 @@ for ((generation=1; generation<=generations; generation++)); do
       "$time_budget" "$generation" "$generations"
     break
   fi
+  # Resolve stdout target for this generation.
+  gen_stdout_target="$stdout_target"
+  gen_log_note=""
+  if [[ "$stdout_mode" == log ]]; then
+    gen_log_file="${PWD}/psp_${agent}_${run_ts}_gen$(printf '%02d' "$generation").log"
+    gen_stdout_target="$gen_log_file"
+    gen_log_note=" → ${gen_log_file##*/}"
+  fi
   generation_start="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
-  printf 'PSP %d/%d | agent=%s | plan=%s | bin=%s | args=%s\n' \
-    "$generation" "$generations" "$agent" "$plan_display" "$agent_bin" "$agent_args_text"
-  "${agent_command[@]}" < "$effective_plan" > "$stdout_target"
+  printf 'PSP %d/%d | running...%s\n' "$generation" "$generations" "$gen_log_note"
+  "${agent_command[@]}" < "$effective_plan" > "$gen_stdout_target"
   generation_end="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
   if [[ "$generation_end" == "$generation_start" ]]; then
     append_result "$generation" "no_commit" "-" "no new commit"
+    printf 'PSP %d/%d | no commit\n' "$generation" "$generations"
   else
     append_result "$generation" "committed" "$generation_end" "HEAD advanced"
+    printf 'PSP %d/%d | committed %s\n' "$generation" "$generations" "${generation_end:0:7}"
   fi
   (( generation < generations )) && sleep "$sleep_seconds"
 done

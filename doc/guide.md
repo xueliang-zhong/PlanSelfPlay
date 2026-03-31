@@ -59,7 +59,7 @@ Usage: psp [options] [plan-path]
   -g, --generations N                 Generations to run (default: 10)
   -s, --sleep SECONDS                 Pause between generations (default: 2)
   -t, --time-budget SECONDS           Wall-clock cap; 0 = no limit
-  -o, --stdout discard|inherit        Agent stdout handling (default: discard)
+  -o, --stdout discard|inherit|log    Agent stdout handling (log = per-generation files)
   -x, --agent-args STRING             Override full agent argument string
       --agent-bin PATH                Override agent executable
       --yolo                          Skip permission prompts (use with care)
@@ -238,15 +238,44 @@ throwaway branch first.
 
 ```bash
 for generation in 1..N:
-    run: agent < plan > /dev/null
+    run: agent < plan > stdout_target
     if HEAD advanced: record "committed" in results.tsv
     else:             record "no_commit"
     sleep between generations
 ```
 
 The plan is written to a temp file per run (built-in template) or read directly
-(explicit `--plan`). The agent receives it on stdin. All agent output goes to
-`/dev/null` by default (`--stdout discard`); use `--stdout inherit` to see it.
+(explicit `--plan`). The agent receives it on stdin.
+
+### Progress output
+
+PSP prints two lines per generation — one when starting, one with the outcome:
+
+```
+PSP Step | plan: (builtin) | goal: reduce lines of code | agent: codex | generations: 9
+PSP 1/9 | running...
+PSP 1/9 | committed abc1234
+PSP 2/9 | running...
+PSP 2/9 | no commit
+```
+
+### `--stdout` modes
+
+| Value | Behaviour |
+| --- | --- |
+| `discard` (default) | Agent output is discarded |
+| `inherit` | Agent output is printed to the terminal |
+| `log` | Each generation's output is saved to a file in `$PWD` |
+
+With `--stdout log`, a log file is created for each generation:
+
+```
+PSP 1/9 | running... → psp_codex_20260331T090000Z_gen01.log
+PSP 1/9 | committed abc1234
+```
+
+All logs from the same run share a timestamp prefix so they sort together.
+Set `stdout = "log"` in `~/.psp/config.toml` to make this the default.
 
 ---
 
