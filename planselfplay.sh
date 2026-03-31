@@ -5,7 +5,7 @@ PSP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 agent="codex"
-plan_path="${PWD}/plan.example.txt"
+plan_path="${PWD}/plan.template.txt"
 plan_explicit=0; [[ -n "${PLAN_PATH:-}" ]] && plan_explicit=1
 agent_bin=""
 agent_args_text=""
@@ -136,7 +136,7 @@ Options:
   --agent codex|claude|opencode, -a  Coding agent to use (default: codex)
   --plan PATH, -p                    Plan file to replay
   --init                             Initialise all ~/.psp files (config + skills) and exit
-  --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.example.txt)
+  --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.template.txt)
   --init-config                      Write a starter ~/.psp/config.toml and exit
   --init-skills                      Install bundled skills into ~/.psp/skills/ and exit
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
@@ -235,7 +235,7 @@ while (( $# )); do
     -p|--plan)       set_plan "$(arg "$@")"; shift ;;
     -i|--init-plan)
       if [[ $# -ge 2 && "${2:-}" != -* ]]; then init_plan_path="$2"; shift
-      else init_plan_path="plan.example.txt"; fi ;;
+      else init_plan_path="plan.template.txt"; fi ;;
     --yolo)          yolo_mode=1 ;;
     -g|--generations) generations="$(arg "$@")"; shift ;;
     -g*)             generations="${1#-g}" ;;

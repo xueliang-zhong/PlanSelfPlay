@@ -16,7 +16,7 @@ into another repo the same day.
 | --- | --- |
 | `planselfplay.sh` | Driver: replays a PLAN through the chosen agent |
 | `psp` | Symlink to `planselfplay.sh` for shorter daily use |
-| `plan.example.txt` | Bundled example plan with all directives |
+| `plan.template.txt` | Bundled example plan with all directives |
 | `~/.psp/config.toml` | User defaults (lowest priority) |
 | `~/.psp/history` | Append-only run log |
 | `~/.psp/skills/` | Pre-installed skills; injected into every plan |
