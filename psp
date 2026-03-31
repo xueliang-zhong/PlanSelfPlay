@@ -322,10 +322,11 @@ def print_history(psp_dir: Path) -> int:
 
     seen: set[str] = set()
     for line in history_path.read_text(encoding="utf-8").splitlines():
-        parts = line.split("\t")
-        if len(parts) < 5:
-            continue
-        goal = parts[4]
+        if "\t" not in line:
+            goal = line
+        else:
+            parts = line.split("\t")
+            goal = parts[4] if len(parts) >= 5 else ""
         if goal in seen:
             continue
         seen.add(goal)

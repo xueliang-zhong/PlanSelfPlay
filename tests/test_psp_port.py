@@ -55,6 +55,24 @@ class PSPPortTests(unittest.TestCase):
 
         self.assert_parity(["--history"], fixture=fixture)
 
+    def test_history_preserves_malformed_lines_like_shell(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            history_dir = home / ".psp"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            (history_dir / "history").write_text(
+                "\n".join(
+                    [
+                        "malformed line without tabs",
+                        "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\talpha",
+                        "short\tline",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+        self.assert_parity(["--history"], fixture=fixture)
+
     def test_dry_run_builtin_goal_matches_shell(self) -> None:
         self.assert_parity(["--dry-run"], stdin="reduce lines of code\n")
 
