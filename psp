@@ -1,88 +1,19 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+from __future__ import annotations
 
-resolve_path() {
-  local path="$1" dir
-  while [[ -L "$path" ]]; do
-    dir="$(cd -P "$(dirname "$path")" && pwd)"
-    path="$(readlink "$path")"
-    [[ "$path" = /* ]] || path="$dir/$path"
-  done
-  dir="$(cd -P "$(dirname "$path")" && pwd)"
-  printf '%s/%s\n' "$dir" "$(basename "$path")"
-}
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 
-PSP_SCRIPT_PATH="$(resolve_path "${BASH_SOURCE[0]}")"
-PSP_SCRIPT_DIR="$(cd -P "$(dirname "$PSP_SCRIPT_PATH")" && pwd)"
 
-# ── Defaults ──────────────────────────────────────────────────────────────────
-agent="codex"
-plan_path="${PWD}/plan.template.txt"
-plan_explicit=0; [[ -n "${PLAN_PATH:-}" ]] && plan_explicit=1
-agent_bin=""
-agent_args_text=""
-goal_text=""
-generations="10"
-sleep_seconds="2"
-time_budget="0"
-output_mode="log"
-dry_run="0"
-install_mode=0
-plan_seen=0
-init_plan_path=""
-yolo_mode=0
-results_path=""
-PSP_DIR="${PSP_DIR:-${HOME}/.psp}"
-
-quit()    { printf '%s\n' "$*" >&2; exit 1; }
-arg()     { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
-set_plan(){ (( plan_seen == 0 )) || quit "Provide the plan path once"; plan_seen=1; plan_explicit=1; plan_path="$1"; }
-
-ensure_results_ledger() {
-  [[ -n "$results_path" ]] || return 0
-  [[ -e "$results_path" ]] || printf 'timestamp_utc\tgeneration\tstatus\tcommit\tnote\n' > "$results_path"
-}
-append_result() {
-  [[ -n "$results_path" ]] || return 0
-  local generation="$1" status="$2" commit="$3" note="$4" timestamp
-  ensure_results_ledger
-  timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$timestamp" "$generation" "$status" "${commit:--}" "$note" >> "$results_path"
-}
-
-# Load ~/.psp/config.toml — flat key = value, TOML subset.
-# Priority: defaults < config.toml < CLI flags.
-load_config() {
-  local cfg="$PSP_DIR/config.toml"
-  [[ -f "$cfg" ]] || return 0
-  local line key val
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ "$line" =~ ^[[:space:]]*(#|$|\[) ]] && continue
-    [[ "$line" =~ ^[[:space:]]*([a-zA-Z_][a-zA-Z0-9_-]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]] || continue
-    key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
-    if   [[ "$val" == '"'* ]]; then val="${val#\"}"; val="${val%%\"*}";
-    elif [[ "$val" == "'"* ]]; then val="${val#\'}"; val="${val%%\'*}";
-    else val="${val%%[[:space:]]*#*}"; val="${val%"${val##*[! $'\t']}"}"; fi
-    case "$key" in
-      agent)        agent="$val" ;;
-      generations)  generations="$val" ;;
-      sleep)        sleep_seconds="$val" ;;
-      time_budget)  time_budget="$val" ;;
-      output)       output_mode="$val" ;;
-      agent_bin)    agent_bin="$val" ;;
-      agent_args)   agent_args_text="$val" ;;
-      yolo)         [[ "$val" == "true" ]] && yolo_mode=1 ;;
-    esac
-  done < "$cfg"
-}
-
-# Write a starter ~/.psp/config.toml (will not overwrite an existing file).
-write_default_config() {
-  local cfg="$PSP_DIR/config.toml"
-  mkdir -p "$PSP_DIR"
-  [[ -e "$cfg" ]] && { printf 'Config already exists: %s\n' "$cfg"; return 1; }
-  cat > "$cfg" <<'TOML'
-# ~/.psp/config.toml — PSP user defaults
+CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # Priority: this file < command-line flags
 # All keys are optional; uncomment and edit the ones you want.
 
@@ -94,100 +25,246 @@ write_default_config() {
 # agent_bin   = ""            # override the agent executable path
 # agent_args  = ""            # override the full agent argument string
 # yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
-TOML
-  printf 'Wrote default config to %s\n' "$cfg"
-}
+"""
 
-# Initialise ~/.psp/config.toml in one shot (--init).
-init_all() {
-  printf 'PSP dir: %s\n' "$PSP_DIR"
-  write_default_config || true   # non-fatal if config already exists
-}
+BUILTIN_PLAN_TEMPLATE = """DOMAIN: the current working directory and its contents.
 
-path_block_state() {
-  local rc="$1" start='# >>> psp >>>' end='# <<< psp <<<'
-  local has_start=0 has_end=0
-  [[ -f "$rc" ]] || { printf 'missing\n'; return 0; }
-  grep -Fx 'export PATH="$HOME/.local/bin:$PATH"' "$rc" >/dev/null 2>&1 && {
-    printf 'present\n'
+GOAL: {goal}
+
+LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.
+
+LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes that seem relevant before changing anything so you extend the existing trajectory instead of restarting it.
+
+APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply relevant ones to your approach.
+DEAD ENDS: before designing, read FAILED_PATHS.md if it exists and never re-try any listed approach. When you abandon an approach, append it to FAILED_PATHS.md with a one-line reason.
+
+STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
+
+RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then improve the design based on rethink.
+
+AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
+
+RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, status, commit, and note.
+
+UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
+
+WRITE SKILLS: promote a lesson into skill_<topic>.md only when it is reusable, concrete, and likely to help many future runs. Do not create a skill for a one-off repo quirk, a weak hunch, or a trick that succeeded only once.
+
+SKILL HYGIENE: patch an existing skill when refining the same technique; create a new skill only for a genuinely different technique. Keep skills short, actionable, and low-duplication.
+
+SELECTION:
+- if the result is clearly better, create a local git commit whose message says what changed and what improved
+- otherwise, `git reset` the repo to its pre-task state
+
+CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; treat protected control files (such as PLAN files) as fixed unless the goal explicitly puts them in scope.
+"""
+
+HISTORY_INPUT_RE = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\t[^\t]*\t[^\t]*\tg=[^\t]*\t(.*)$",
+    re.DOTALL,
+)
+CONFIG_LINE_RE = re.compile(
+    r"^[ \t]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \t]*=[ \t]*(.*)[ \t]*$"
+)
+SLEEP_RE = re.compile(r"^([0-9]+([.][0-9]+)?|[.][0-9]+)$")
+SAFE_SHELL_RE = re.compile(r"^[A-Za-z0-9_./:-]+$")
+
+
+@dataclass
+class Options:
+    script_path: Path
+    script_dir: Path
+    agent: str = "codex"
+    plan_path: str = ""
+    plan_explicit: bool = False
+    agent_bin: str = ""
+    agent_args_text: str = ""
+    goal_text: str = ""
+    generations: str = "10"
+    sleep_seconds: str = "2"
+    time_budget: str = "0"
+    output_mode: str = "log"
+    dry_run: int = 0
+    install_mode: int = 0
+    plan_seen: int = 0
+    init_plan_path: str = ""
+    yolo_mode: int = 0
+    results_path: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.plan_path:
+            self.plan_path = f"{Path.cwd()}/plan.template.txt"
+        self.plan_explicit = bool(os.environ.get("PLAN_PATH"))
+
+    @property
+    def psp_dir(self) -> Path:
+        return Path(os.environ.get("PSP_DIR", str(Path.home() / ".psp")))
+
+
+def quit_with(message: str) -> "NoReturn":
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def resolve_path(path: Path) -> Path:
+    return path.resolve()
+
+
+def builtin_plan_template(goal: str) -> str:
+    return BUILTIN_PLAN_TEMPLATE.format(goal=goal)
+
+
+def ensure_results_ledger(results_path: str) -> None:
+    if not results_path:
+        return
+    path = Path(results_path)
+    if not path.exists():
+        path.write_text("timestamp_utc\tgeneration\tstatus\tcommit\tnote\n", encoding="utf-8")
+
+
+def append_result(results_path: str, generation: int, status: str, commit: str, note: str) -> None:
+    if not results_path:
+        return
+    ensure_results_ledger(results_path)
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with Path(results_path).open("a", encoding="utf-8") as handle:
+        handle.write(f"{timestamp}\t{generation}\t{status}\t{commit or '-'}\t{note}\n")
+
+
+def load_config(opts: Options) -> None:
+    cfg = opts.psp_dir / "config.toml"
+    if not cfg.is_file():
+        return
+
+    for raw_line in cfg.read_text(encoding="utf-8").splitlines():
+        stripped = raw_line.lstrip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("["):
+            continue
+        match = CONFIG_LINE_RE.match(raw_line)
+        if not match:
+            continue
+
+        key, value = match.groups()
+        if value.startswith('"'):
+            value = value[1:].split('"', 1)[0]
+        elif value.startswith("'"):
+            value = value[1:].split("'", 1)[0]
+        else:
+            value = re.sub(r"[ \t]+#.*$", "", value).rstrip(" \t")
+
+        if key == "agent":
+            opts.agent = value
+        elif key == "generations":
+            opts.generations = value
+        elif key == "sleep":
+            opts.sleep_seconds = value
+        elif key == "time_budget":
+            opts.time_budget = value
+        elif key == "output":
+            opts.output_mode = value
+        elif key == "agent_bin":
+            opts.agent_bin = value
+        elif key == "agent_args":
+            opts.agent_args_text = value
+        elif key == "yolo" and value == "true":
+            opts.yolo_mode = 1
+
+
+def write_default_config(psp_dir: Path) -> int:
+    cfg = psp_dir / "config.toml"
+    psp_dir.mkdir(parents=True, exist_ok=True)
+    if cfg.exists():
+        print(f"Config already exists: {cfg}")
+        return 1
+    cfg.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+    print(f"Wrote default config to {cfg}")
     return 0
-  }
-  grep -F "$start" "$rc" >/dev/null 2>&1 && has_start=1 || true
-  grep -F "$end" "$rc" >/dev/null 2>&1 && has_end=1 || true
-  if (( has_start && has_end )); then
-    printf 'present\n'
-  elif (( has_start || has_end )); then
-    printf 'partial\n'
-  else
-    printf 'absent\n'
-  fi
-}
 
-ensure_path_block() {
-  local rc="$1"
-  local state
-  state="$(path_block_state "$rc")"
-  case "$state" in
-    present)
-      printf 'PATH already configured in %s\n' "$rc"
-      return 0
-      ;;
-    partial)
-      quit "Refusing to edit $rc because it contains a partial PSP marker block"
-      ;;
-  esac
-  mkdir -p "$(dirname "$rc")"
-  touch "$rc"
-  [[ -s "$rc" ]] && printf '\n' >> "$rc"
-  cat >> "$rc" <<'EOF'
-# >>> psp >>>
-export PATH="$HOME/.local/bin:$PATH"
-# <<< psp <<<
-EOF
-  printf 'Updated %s\n' "$rc"
-}
 
-install_symlink() {
-  local bin_dir="${HOME}/.local/bin"
-  local link_path="${bin_dir}/psp"
-  mkdir -p "$bin_dir"
-  if [[ -L "$link_path" ]]; then
-    if [[ "$(resolve_path "$link_path")" == "$PSP_SCRIPT_PATH" ]]; then
-      printf 'Launcher already installed: %s -> %s\n' "$link_path" "$PSP_SCRIPT_PATH"
-      return 0
-    fi
-    quit "Refusing to overwrite existing symlink: $link_path"
-  fi
-  if [[ -e "$link_path" ]]; then
-    quit "Refusing to overwrite existing file: $link_path"
-  fi
-  ln -s "$PSP_SCRIPT_PATH" "$link_path"
-  printf 'Installed launcher: %s -> %s\n' "$link_path" "$PSP_SCRIPT_PATH"
-}
+def init_all(psp_dir: Path) -> None:
+    print(f"PSP dir: {psp_dir}")
+    try:
+        write_default_config(psp_dir)
+    except SystemExit:
+        raise
 
-install_self() {
-  printf 'Installing PSP from %s\n' "$PSP_SCRIPT_DIR"
-  init_all
-  install_symlink
-  ensure_path_block "${HOME}/.zshrc"
-  ensure_path_block "${HOME}/.bashrc"
-  printf 'Install complete. Open a new shell, then run: psp --help\n'
-}
 
-# Append one line to ~/.psp/history per run.
-append_history() {
-  mkdir -p "$PSP_DIR"
-  printf '%s\t%s\t%s\tg=%s\t%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    "$agent" "$PWD" "$generations" \
-    "${goal_text:-(plan: ${plan_display})}" \
-    >> "$PSP_DIR/history"
-}
+def path_block_state(rc_path: Path) -> str:
+    start = "# >>> psp >>>"
+    end = "# <<< psp <<<"
+    export_line = 'export PATH="$HOME/.local/bin:$PATH"'
+    if not rc_path.exists():
+        return "missing"
+    content = rc_path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    if export_line in lines:
+        return "present"
+    has_start = start in content
+    has_end = end in content
+    if has_start and has_end:
+        return "present"
+    if has_start or has_end:
+        return "partial"
+    return "absent"
 
-usage() {
-  cat <<EOF
-Usage: ${0##*/} [options] [plan-path]
-       echo "GOAL" | ${0##*/} [options]
+
+def ensure_path_block(rc_path: Path) -> None:
+    state = path_block_state(rc_path)
+    if state == "present":
+        print(f"PATH already configured in {rc_path}")
+        return
+    if state == "partial":
+        quit_with(f"Refusing to edit {rc_path} because it contains a partial PSP marker block")
+
+    rc_path.parent.mkdir(parents=True, exist_ok=True)
+    if not rc_path.exists():
+        rc_path.touch()
+    elif rc_path.stat().st_size > 0:
+        with rc_path.open("a", encoding="utf-8") as handle:
+            handle.write("\n")
+
+    with rc_path.open("a", encoding="utf-8") as handle:
+        handle.write('# >>> psp >>>\nexport PATH="$HOME/.local/bin:$PATH"\n# <<< psp <<<\n')
+    print(f"Updated {rc_path}")
+
+
+def install_symlink(script_path: Path) -> None:
+    bin_dir = Path.home() / ".local" / "bin"
+    link_path = bin_dir / "psp"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    if link_path.is_symlink():
+        if resolve_path(link_path) == script_path:
+            print(f"Launcher already installed: {link_path} -> {script_path}")
+            return
+        quit_with(f"Refusing to overwrite existing symlink: {link_path}")
+    if link_path.exists():
+        quit_with(f"Refusing to overwrite existing file: {link_path}")
+    link_path.symlink_to(script_path)
+    print(f"Installed launcher: {link_path} -> {script_path}")
+
+
+def install_self(opts: Options) -> None:
+    print(f"Installing PSP from {opts.script_dir}")
+    init_all(opts.psp_dir)
+    install_symlink(opts.script_path)
+    ensure_path_block(Path.home() / ".zshrc")
+    ensure_path_block(Path.home() / ".bashrc")
+    print("Install complete. Open a new shell, then run: psp --help")
+
+
+def append_history(opts: Options, plan_display: str) -> None:
+    opts.psp_dir.mkdir(parents=True, exist_ok=True)
+    history_path = opts.psp_dir / "history"
+    goal_field = opts.goal_text if opts.goal_text else f"(plan: {plan_display})"
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with history_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"{timestamp}\t{opts.agent}\t{Path.cwd()}\tg={opts.generations}\t{goal_field}\n")
+
+
+def usage(prog: str) -> None:
+    sys.stdout.write(
+        f"""Usage: {prog} [options] [plan-path]
+       echo "GOAL" | {prog} [options]
 Replay a pure-text PLAN through a coding agent (codex, claude, or opencode).
 When stdin is a pipe the goal is read from it; a plan file is optional.
 
@@ -216,213 +293,394 @@ Agent presets (overridable via --agent-args):
 
 Config:      ~/.psp/config.toml  (key = value defaults; CLI flags override)
              ~/.psp/history      (append-only run log; browse with --history)
-EOF
-}
+"""
+    )
 
-# Built-in ML-style plan template; used when goal is piped via stdin and no --plan is given.
-# Update this function to change the default agent policy.
-builtin_plan_template() {
-  cat <<PLAN_TEMPLATE
-DOMAIN: the current working directory and its contents.
 
-GOAL: $1
+def arg_value(argv: list[str], index: int, option: str) -> str:
+    if index + 1 >= len(argv) or argv[index + 1] == "":
+        quit_with(f"Missing value for {option}")
+    return argv[index + 1]
 
-LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.
 
-LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes that seem relevant before changing anything so you extend the existing trajectory instead of restarting it.
+def set_plan(opts: Options, path: str) -> None:
+    if opts.plan_seen:
+        quit_with("Provide the plan path once")
+    opts.plan_seen = 1
+    opts.plan_explicit = True
+    opts.plan_path = path
 
-APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply relevant ones to your approach.
-DEAD ENDS: before designing, read FAILED_PATHS.md if it exists and never re-try any listed approach. When you abandon an approach, append it to FAILED_PATHS.md with a one-line reason.
 
-STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
+def print_history(psp_dir: Path) -> int:
+    history_path = psp_dir / "history"
+    if not history_path.is_file():
+        print("No history yet.", file=sys.stderr)
+        return 0
 
-RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then improve the design based on rethink.
+    seen: set[str] = set()
+    for line in history_path.read_text(encoding="utf-8").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 5:
+            continue
+        goal = parts[4]
+        if goal in seen:
+            continue
+        seen.add(goal)
+        print(goal)
+    return 0
 
-AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
 
-RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, status, commit, and note.
+def parse_args(opts: Options, argv: list[str]) -> int | None:
+    index = 0
+    prog = Path(sys.argv[0]).name
+    while index < len(argv):
+        current = argv[index]
+        if current in ("-h", "--help"):
+            usage(prog)
+            return 0
+        if current == "--install":
+            opts.install_mode = 1
+        elif current == "--init":
+            init_all(opts.psp_dir)
+            return 0
+        elif current == "--init-config":
+            return write_default_config(opts.psp_dir)
+        elif current == "--history":
+            return print_history(opts.psp_dir)
+        elif current == "--dry-run":
+            opts.dry_run = 1
+        elif current in ("-a", "--agent"):
+            opts.agent = arg_value(argv, index, current)
+            index += 1
+        elif current in ("-p", "--plan"):
+            set_plan(opts, arg_value(argv, index, current))
+            index += 1
+        elif current in ("-i", "--init-plan"):
+            if index + 1 < len(argv) and not argv[index + 1].startswith("-"):
+                opts.init_plan_path = argv[index + 1]
+                index += 1
+            else:
+                opts.init_plan_path = "plan.template.txt"
+        elif current == "--yolo":
+            opts.yolo_mode = 1
+        elif current in ("-g", "--generations"):
+            opts.generations = arg_value(argv, index, current)
+            index += 1
+        elif current.startswith("-g") and current != "-g":
+            opts.generations = current[2:]
+        elif current in ("-s", "--sleep"):
+            opts.sleep_seconds = arg_value(argv, index, current)
+            index += 1
+        elif current in ("-t", "--time-budget"):
+            opts.time_budget = arg_value(argv, index, current)
+            index += 1
+        elif current in ("-o", "--output"):
+            opts.output_mode = arg_value(argv, index, current)
+            index += 1
+        elif current in ("--agent-bin", "--codex-bin"):
+            opts.agent_bin = arg_value(argv, index, current)
+            index += 1
+        elif current in ("-x", "--agent-args", "--codex-args"):
+            opts.agent_args_text = arg_value(argv, index, current)
+            index += 1
+        elif current == "--":
+            index += 1
+            if index >= len(argv):
+                quit_with("Missing plan path after --")
+            set_plan(opts, argv[index])
+        elif current.startswith("-"):
+            usage(prog)
+            quit_with(f"Unknown option: {current}")
+        else:
+            set_plan(opts, current)
+        index += 1
+    return None
 
-UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
 
-WRITE SKILLS: promote a lesson into skill_<topic>.md only when it is reusable, concrete, and likely to help many future runs. Do not create a skill for a one-off repo quirk, a weak hunch, or a trick that succeeded only once.
+def read_goal(opts: Options) -> None:
+    if not sys.stdin.isatty():
+        stdin_goal = sys.stdin.read().rstrip("\n")
+        match = HISTORY_INPUT_RE.match(stdin_goal)
+        if match:
+            stdin_goal = match.group(1)
+        if stdin_goal:
+            opts.goal_text = stdin_goal
+        return
 
-SKILL HYGIENE: patch an existing skill when refining the same technique; create a new skill only for a genuinely different technique. Keep skills short, actionable, and low-duplication.
+    if opts.goal_text or opts.plan_explicit or opts.init_plan_path:
+        return
 
-SELECTION:
-- if the result is clearly better, create a local git commit whose message says what changed and what improved
-- otherwise, \`git reset\` the repo to its pre-task state
+    print("Goal: ", end="", file=sys.stderr, flush=True)
+    with open("/dev/tty", "r", encoding="utf-8") as tty:
+        goal = tty.readline().rstrip("\n")
+    if not goal:
+        quit_with("No goal provided")
+    opts.goal_text = goal
 
-CONSTRAINTS: work only inside this repo; never scan outside it; wrap every \`find\`, \`rg\`, or \`grep\` with \`timeout\` no longer than 10 minutes; prefer reversible edits; treat protected control files (such as PLAN files) as fixed unless the goal explicitly puts them in scope.
-PLAN_TEMPLATE
-}
 
-# ── Config file (lowest priority; CLI flags override) ─────────────────────────
-load_config
+def apply_agent_presets(opts: Options) -> None:
+    if opts.agent == "codex":
+        if not opts.agent_bin:
+            opts.agent_bin = os.environ.get("AGENT_BIN") or os.environ.get("CODEX_BIN") or "codex"
+        if not opts.agent_args_text:
+            if opts.yolo_mode:
+                opts.agent_args_text = "--yolo exec -"
+            else:
+                opts.agent_args_text = os.environ.get("AGENT_ARGS") or os.environ.get("CODEX_ARGS") or "--full-auto exec -"
+        return
 
-while (( $# )); do
-  case "$1" in
-    -h|--help)       usage; exit 0 ;;
-    --install)       install_mode=1 ;;
-    --init)          init_all; exit 0 ;;
-    --init-config)   write_default_config; exit $? ;;
-    --history)
-      [[ -f "$PSP_DIR/history" ]] || { printf 'No history yet.\n' >&2; exit 0; }
-      cut -f5 "$PSP_DIR/history" | awk '!seen[$0]++'; exit 0 ;;
-    --dry-run)       dry_run=1 ;;
-    -a|--agent)      agent="$(arg "$@")"; shift ;;
-    -p|--plan)       set_plan "$(arg "$@")"; shift ;;
-    -i|--init-plan)
-      if [[ $# -ge 2 && "${2:-}" != -* ]]; then init_plan_path="$2"; shift
-      else init_plan_path="plan.template.txt"; fi ;;
-    --yolo)          yolo_mode=1 ;;
-    -g|--generations) generations="$(arg "$@")"; shift ;;
-    -g*)             generations="${1#-g}" ;;
-    -s|--sleep)      sleep_seconds="$(arg "$@")"; shift ;;
-    -t|--time-budget) time_budget="$(arg "$@")"; shift ;;
-    -o|--output)     output_mode="$(arg "$@")"; shift ;;
-    --agent-bin|--codex-bin)      agent_bin="$(arg "$@")"; shift ;;
-    -x|--agent-args|--codex-args) agent_args_text="$(arg "$@")"; shift ;;
-    --) shift; (( $# )) || quit "Missing plan path after --"; set_plan "$1" ;;
-    -*) usage >&2; quit "Unknown option: $1" ;;
-    *)  set_plan "$1" ;;
-  esac
-  shift
-done
+    if opts.agent == "claude":
+        if not opts.agent_bin:
+            opts.agent_bin = os.environ.get("AGENT_BIN") or "claude"
+        if not opts.agent_args_text:
+            if opts.yolo_mode:
+                opts.agent_args_text = "-p --dangerously-skip-permissions -"
+            else:
+                opts.agent_args_text = os.environ.get("AGENT_ARGS") or "-p -"
+        return
 
-if (( install_mode )); then
-  install_self
-  exit 0
-fi
+    if opts.agent == "opencode":
+        if not opts.agent_bin:
+            opts.agent_bin = os.environ.get("AGENT_BIN") or "opencode"
+        if not opts.agent_args_text:
+            opts.agent_args_text = os.environ.get("AGENT_ARGS") or "run -"
+        if opts.yolo_mode:
+            print("PSP WARNING | --yolo is not supported for opencode; ignored", file=sys.stderr)
+        return
 
-# Read goal from stdin.
-#   Piped:       echo "improve tests" | psp   — read silently
-#   Interactive: psp with no plan/goal        — show "Goal: " prompt
-if [[ ! -t 0 ]]; then
-  stdin_goal=$(cat)
-  # If it looks like a history entry, extract the goal (last field).
-  if [[ "$stdin_goal" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'\t'[^$'\t']*$'\t'[^$'\t']*$'\t'g=[^$'\t']*$'\t'(.*) ]]; then
-    stdin_goal="${BASH_REMATCH[1]}"
-  fi
-  [[ -n "$stdin_goal" ]] && goal_text="$stdin_goal"
-elif [[ -z "$goal_text" && "$plan_explicit" == 0 && -z "$init_plan_path" ]]; then
-  printf 'Goal: ' >&2
-  IFS= read -r goal_text </dev/tty
-  [[ -n "$goal_text" ]] || quit "No goal provided"
-fi
+    quit_with(f"Unknown agent: {opts.agent}. Valid values: codex, claude, opencode")
 
-if [[ -n "$init_plan_path" ]]; then
-  [[ -e "$init_plan_path" ]] && quit "Refusing to overwrite existing file: $init_plan_path"
-  builtin_plan_template "describe the improvement you want here" > "$init_plan_path"
-  printf 'Wrote starter plan to %s\n' "$init_plan_path"
-  exit 0
-fi
 
-# Apply agent presets (explicit --agent-bin / --agent-args flags take precedence)
-case "$agent" in
-  codex)
-    [[ -n "$agent_bin" ]] || agent_bin="${AGENT_BIN:-${CODEX_BIN:-codex}}"
-    if [[ -z "$agent_args_text" ]]; then
-      (( yolo_mode )) && agent_args_text="--yolo exec -" \
-                      || agent_args_text="${AGENT_ARGS:-${CODEX_ARGS:---full-auto exec -}}"
-    fi ;;
-  claude)
-    [[ -n "$agent_bin" ]] || agent_bin="${AGENT_BIN:-claude}"
-    if [[ -z "$agent_args_text" ]]; then
-      (( yolo_mode )) && agent_args_text="-p --dangerously-skip-permissions -" \
-                      || agent_args_text="${AGENT_ARGS:--p -}"
-    fi ;;
-  opencode)
-    [[ -n "$agent_bin" ]] || agent_bin="${AGENT_BIN:-opencode}"
-    [[ -z "$agent_args_text" ]] && agent_args_text="${AGENT_ARGS:-run -}"
-    (( yolo_mode )) && printf 'PSP WARNING | --yolo is not supported for opencode; ignored\n' >&2 ;;
-  *) quit "Unknown agent: $agent. Valid values: codex, claude, opencode" ;;
-esac
+def validate(opts: Options) -> None:
+    if not opts.goal_text or opts.plan_explicit:
+        plan_path = Path(opts.plan_path)
+        if not (plan_path.is_file() and os.access(plan_path, os.R_OK)):
+            quit_with(f"Plan file is not readable: {opts.plan_path}")
 
-# Validate
-if [[ -z "$goal_text" || "$plan_explicit" == 1 ]]; then
-  [[ -n "$plan_path" && -r "$plan_path" ]] || quit "Plan file is not readable: $plan_path"
-fi
-[[ "$generations"   =~ ^[1-9][0-9]*$ ]]                        || quit "GENERATIONS must be a positive integer: $generations"
-[[ "$sleep_seconds" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]]    || quit "SLEEP_SECONDS must be a non-negative number: $sleep_seconds"
-[[ "$time_budget"   =~ ^[0-9]+$ ]]                             || quit "TIME_BUDGET must be a non-negative integer (seconds): $time_budget"
-[[ "$dry_run"       =~ ^[01]$ ]]                               || quit "DRY_RUN must be 0 or 1: $dry_run"
-[[ "$output_mode" == discard || "$output_mode" == inherit || "$output_mode" == log ]] \
-  || quit "OUTPUT_MODE must be 'discard', 'inherit', or 'log': $output_mode"
-output_target=/dev/null; [[ "$output_mode" == inherit ]] && output_target=/dev/stdout
-agent_args=(); [[ -n "$agent_args_text" ]] && read -r -a agent_args <<< "$agent_args_text"
-agent_command=("$agent_bin" "${agent_args[@]}")
+    if not re.fullmatch(r"[1-9][0-9]*", opts.generations):
+        quit_with(f"GENERATIONS must be a positive integer: {opts.generations}")
+    if not SLEEP_RE.fullmatch(opts.sleep_seconds):
+        quit_with(f"SLEEP_SECONDS must be a non-negative number: {opts.sleep_seconds}")
+    if not re.fullmatch(r"[0-9]+", opts.time_budget):
+        quit_with(f"TIME_BUDGET must be a non-negative integer (seconds): {opts.time_budget}")
+    if opts.dry_run not in (0, 1):
+        quit_with(f"DRY_RUN must be 0 or 1: {opts.dry_run}")
+    if opts.output_mode not in {"discard", "inherit", "log"}:
+        quit_with(f"OUTPUT_MODE must be 'discard', 'inherit', or 'log': {opts.output_mode}")
 
-plan_display="$plan_path"
-[[ -n "$goal_text" && "$plan_explicit" == 0 ]] && plan_display="(builtin)"
-# Column width for the generation counter (e.g. " 1/10", "10/10")
-gen_w=${#generations}
-nm_w=$(( gen_w * 2 + 1 ))
-yolo_note=""; (( yolo_mode )) && yolo_note=" | yolo: yes"
-if [[ "$plan_explicit" == 1 ]]; then
-  printf "| PSP %-*s | plan: %s | agent: %s | generations: %s%s |\n" \
-    "$nm_w" "RUN" "$plan_display" "$agent" "$generations" "$yolo_note"
-else
-  printf "| PSP %-*s | goal: %s | agent: %s | generations: %s%s |\n" \
-    "$nm_w" "RUN" "$goal_text" "$agent" "$generations" "$yolo_note"
-fi
-if [[ "$dry_run" == 1 ]]; then
-  printf 'PSP DRY RUN |'; printf ' %q' "${agent_command[@]}"
-  [[ "$plan_display" == "(builtin)" ]] && printf ' < <(builtin_plan_template %q)\n' "$goal_text" \
-                                       || printf ' < %q\n' "$plan_path"
-  exit 0
-fi
 
-command -v "$agent_bin" >/dev/null 2>&1 || quit "Required command not found on PATH: $agent_bin"
-[[ "$plan_path" = /* ]] || plan_path="${PWD}/${plan_path}"
+def split_agent_args(agent_args_text: str) -> list[str]:
+    return agent_args_text.split() if agent_args_text else []
 
-tmp_plan=""
-effective_plan="$plan_path"
-if [[ -n "$goal_text" && "$plan_explicit" == 0 ]]; then
-  tmp_plan=$(mktemp "${PWD}/plan.tmp.XXXXXX")
-  builtin_plan_template "$goal_text" > "$tmp_plan"
-  effective_plan="$tmp_plan"
-elif [[ -n "$goal_text" ]]; then
-  tmp_plan=$(mktemp "${PWD}/$(basename "${plan_path%.*}").tmp.XXXXXX")
-  awk -v goal="$goal_text" '/^GOAL:/{print "GOAL: " goal; next} {print}' "$plan_path" > "$tmp_plan"
-  effective_plan="$tmp_plan"
-fi
 
-results_path="${PWD}/results.tsv"
-ensure_results_ledger
-trap '[[ -n "$tmp_plan" ]] && rm -f "$tmp_plan"' EXIT
+def bash_quote(value: str) -> str:
+    if value == "":
+        return "''"
+    if SAFE_SHELL_RE.fullmatch(value):
+        return value
 
-# For --output log: fix a single run timestamp shared across all generation logs.
-run_ts=""
-[[ "$output_mode" == log ]] && run_ts="$(date -u +%Y%m%dT%H%M%SZ)"
+    escaped: list[str] = []
+    for char in value:
+        if char.isalnum() or char in "_./:-":
+            escaped.append(char)
+        else:
+            escaped.append(f"\\{char}")
+    return "".join(escaped)
 
-append_history
-psp_start_time=$SECONDS
-for ((generation=1; generation<=generations; generation++)); do
-  if (( time_budget > 0 && SECONDS - psp_start_time >= time_budget )); then
-    printf 'PSP | time budget of %ds reached before generation %d/%d, stopping\n' \
-      "$time_budget" "$generation" "$generations"
-    break
-  fi
-  # Resolve output target for this generation.
-  gen_output_target="$output_target"
-  gen_log_note=""
-  if [[ "$output_mode" == log ]]; then
-    gen_log_file="${PWD}/psp_${agent}_${run_ts}_gen$(printf '%02d' "$generation").log"
-    gen_output_target="$gen_log_file"
-    gen_log_note=" → ${gen_log_file##*/}"
-  fi
-  generation_start="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
-  printf "| PSP %*d/%-*d | running...%s |\n" "$gen_w" "$generation" "$gen_w" "$generations" "$gen_log_note"
-  gen_t=$SECONDS
-  "${agent_command[@]}" < "$effective_plan" > "$gen_output_target" 2>&1
-  took=$(( SECONDS - gen_t ))
-  generation_end="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
-  if [[ "$generation_end" == "$generation_start" ]]; then
-    append_result "$generation" "no_commit" "-" "no new commit"
-    printf "| PSP %*d/%-*d | running → no commit | took: %ds |\n" "$gen_w" "$generation" "$gen_w" "$generations" "$took"
-  else
-    append_result "$generation" "committed" "$generation_end" "HEAD advanced"
-    printf "| PSP %*d/%-*d | running → committed %s | took: %ds |\n" "$gen_w" "$generation" "$gen_w" "$generations" "${generation_end:0:7}" "$took"
-  fi
-  (( generation < generations )) && sleep "$sleep_seconds"
-done
+
+def rewrite_plan_goal(plan_path: Path, goal: str) -> str:
+    rewritten: list[str] = []
+    for line in plan_path.read_text(encoding="utf-8").splitlines(keepends=True):
+        if line.startswith("GOAL:"):
+            rewritten.append(f"GOAL: {goal}\n")
+        else:
+            rewritten.append(line)
+    return "".join(rewritten)
+
+
+def git_head() -> str:
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return "nogit"
+    return completed.stdout.strip() or "nogit"
+
+
+def prepare_effective_plan(opts: Options) -> tuple[str, str]:
+    tmp_plan = ""
+    effective_plan = opts.plan_path
+    cwd = Path.cwd()
+    if opts.goal_text and not opts.plan_explicit:
+        handle, tmp_plan = tempfile.mkstemp(prefix="plan.tmp.", dir=cwd)
+        os.close(handle)
+        Path(tmp_plan).write_text(builtin_plan_template(opts.goal_text), encoding="utf-8")
+        effective_plan = tmp_plan
+    elif opts.goal_text:
+        base_name = Path(opts.plan_path).name
+        if "." in base_name:
+            base_name = base_name.rsplit(".", 1)[0]
+        handle, tmp_plan = tempfile.mkstemp(prefix=f"{base_name}.tmp.", dir=cwd)
+        os.close(handle)
+        Path(tmp_plan).write_text(rewrite_plan_goal(Path(opts.plan_path), opts.goal_text), encoding="utf-8")
+        effective_plan = tmp_plan
+    return effective_plan, tmp_plan
+
+
+def open_output_target(output_mode: str, path: str | None):
+    if output_mode == "discard":
+        return open(os.devnull, "w", encoding="utf-8")
+    if output_mode == "log" and path is not None:
+        return open(path, "w", encoding="utf-8")
+    return None
+
+
+def run_generation_loop(
+    opts: Options,
+    agent_command: list[str],
+    effective_plan: str,
+    plan_display: str,
+) -> int:
+    opts.results_path = f"{Path.cwd()}/results.tsv"
+    ensure_results_ledger(opts.results_path)
+
+    run_ts = ""
+    if opts.output_mode == "log":
+        run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    append_history(opts, plan_display)
+    psp_start_time = time.monotonic()
+    generations = int(opts.generations)
+    gen_w = len(opts.generations)
+    sleep_seconds = float(opts.sleep_seconds)
+    time_budget = int(opts.time_budget)
+
+    for generation in range(1, generations + 1):
+        if time_budget > 0 and int(time.monotonic() - psp_start_time) >= time_budget:
+            print(
+                f"PSP | time budget of {time_budget}s reached before generation {generation}/{generations}, stopping"
+            )
+            return 0
+
+        gen_output_path = None
+        gen_log_note = ""
+        if opts.output_mode == "log":
+            gen_output_path = f"{Path.cwd()}/psp_{opts.agent}_{run_ts}_gen{generation:02d}.log"
+            gen_log_note = f" → {Path(gen_output_path).name}"
+
+        generation_start = git_head()
+        print(f"| PSP {generation:>{gen_w}}/{generations:<{gen_w}} | running...{gen_log_note} |")
+        gen_started_at = time.monotonic()
+
+        with open(effective_plan, "r", encoding="utf-8") as stdin_handle:
+            output_handle = open_output_target(opts.output_mode, gen_output_path)
+            try:
+                completed = subprocess.run(
+                    agent_command,
+                    stdin=stdin_handle,
+                    stdout=output_handle if output_handle is not None else sys.stdout,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
+            finally:
+                if output_handle is not None:
+                    output_handle.close()
+
+        if completed.returncode != 0:
+            return completed.returncode
+
+        took = int(time.monotonic() - gen_started_at)
+        generation_end = git_head()
+        if generation_end == generation_start:
+            append_result(opts.results_path, generation, "no_commit", "-", "no new commit")
+            print(
+                f"| PSP {generation:>{gen_w}}/{generations:<{gen_w}} | running → no commit | took: {took}s |"
+            )
+        else:
+            append_result(opts.results_path, generation, "committed", generation_end, "HEAD advanced")
+            print(
+                f"| PSP {generation:>{gen_w}}/{generations:<{gen_w}} | running → committed {generation_end[:7]} | took: {took}s |"
+            )
+
+        if generation < generations:
+            time.sleep(sleep_seconds)
+
+    return 1
+
+
+def main(argv: list[str]) -> int:
+    script_path = resolve_path(Path(__file__))
+    opts = Options(script_path=script_path, script_dir=script_path.parent)
+    load_config(opts)
+
+    parsed = parse_args(opts, argv)
+    if parsed is not None:
+        return parsed
+
+    if opts.install_mode:
+        install_self(opts)
+        return 0
+
+    read_goal(opts)
+
+    if opts.init_plan_path:
+        init_plan_path = Path(opts.init_plan_path)
+        if init_plan_path.exists():
+            quit_with(f"Refusing to overwrite existing file: {opts.init_plan_path}")
+        init_plan_path.write_text(
+            builtin_plan_template("describe the improvement you want here"),
+            encoding="utf-8",
+        )
+        print(f"Wrote starter plan to {opts.init_plan_path}")
+        return 0
+
+    apply_agent_presets(opts)
+    validate(opts)
+
+    agent_args = split_agent_args(opts.agent_args_text)
+    agent_command = [opts.agent_bin, *agent_args]
+
+    plan_display = opts.plan_path
+    if opts.goal_text and not opts.plan_explicit:
+        plan_display = "(builtin)"
+
+    gen_w = len(opts.generations)
+    nm_w = gen_w * 2 + 1
+    yolo_note = " | yolo: yes" if opts.yolo_mode else ""
+    if opts.plan_explicit:
+        print(
+            f"| PSP {'RUN':<{nm_w}} | plan: {plan_display} | agent: {opts.agent} | generations: {opts.generations}{yolo_note} |"
+        )
+    else:
+        print(
+            f"| PSP {'RUN':<{nm_w}} | goal: {opts.goal_text} | agent: {opts.agent} | generations: {opts.generations}{yolo_note} |"
+        )
+
+    if opts.dry_run == 1:
+        command_text = "".join(f" {bash_quote(part)}" for part in agent_command)
+        if plan_display == "(builtin)":
+            print(f"PSP DRY RUN |{command_text} < <(builtin_plan_template {bash_quote(opts.goal_text)})")
+        else:
+            print(f"PSP DRY RUN |{command_text} < {bash_quote(opts.plan_path)}")
+        return 0
+
+    if shutil.which(opts.agent_bin) is None:
+        quit_with(f"Required command not found on PATH: {opts.agent_bin}")
+
+    if not os.path.isabs(opts.plan_path):
+        opts.plan_path = f"{Path.cwd()}/{opts.plan_path}"
+
+    effective_plan, tmp_plan = prepare_effective_plan(opts)
+    try:
+        return run_generation_loop(opts, agent_command, effective_plan, plan_display)
+    finally:
+        if tmp_plan:
+            Path(tmp_plan).unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
