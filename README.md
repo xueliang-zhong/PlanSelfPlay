@@ -34,9 +34,11 @@ shell and `psp` is ready to use from anywhere.
 
 ```bash
 echo "improve test coverage" | psp         # run with a goal
-psp -p plan.txt -g 6                       # run your own plan
-psp --init-plan plan.txt                   # write a starter plan
 psp --history | fzf | psp                  # re-run a past goal
+
+psp --init-plan plan.txt                   # write a starter plan
+psp -p plan.txt -g 20                      # run your own plan for 20 generations
+
 psp --help                                 # all options
 ```
 
