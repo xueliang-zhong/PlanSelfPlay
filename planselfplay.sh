@@ -189,7 +189,7 @@ while (( $# )); do
     -h|--help)    usage; exit 0 ;;
     --history)
       [[ -f "$PSP_DIR/history" ]] || { printf 'No history yet.\n' >&2; exit 0; }
-      cat "$PSP_DIR/history"; exit 0 ;;
+      cut -f6 "$PSP_DIR/history"; exit 0 ;;
     --dry-run)    dry_run=1 ;;
     -a|--agent)      agent="$(arg "$@")"; shift ;;
     -p|--plan)       set_plan "$(arg "$@")"; shift ;;
