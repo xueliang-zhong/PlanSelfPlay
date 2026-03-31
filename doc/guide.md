@@ -10,13 +10,25 @@ into another repo the same day.
 
 ---
 
+## Install
+
+```bash
+git clone https://github.com/xueliang-zhong/PlanSelfPlay.git ~/PlanSelfPlay
+~/PlanSelfPlay/psp --install
+```
+
+`--install` creates `~/.local/bin/psp`, adds a managed PATH block to
+`~/.zshrc` and `~/.bashrc`, and bootstraps `~/.psp/config.toml` plus bundled
+skills. Open a new shell and `psp` is ready from anywhere.
+
+---
+
 ## Files
 
 | File | Role |
 | --- | --- |
-| `planselfplay.sh` | Driver: replays a PLAN through the chosen agent |
-| `psp` | Symlink to `planselfplay.sh` for shorter daily use |
-| `plan.template.txt` | Bundled example plan with all directives |
+| `psp` | Driver: replays a PLAN through the chosen agent |
+| `plan.template.txt` | Bundled starter plan with all directives |
 | `~/.psp/config.toml` | User defaults (lowest priority) |
 | `~/.psp/history` | Append-only run log |
 | `~/.psp/skills/` | Pre-installed skills; injected into every plan |
@@ -28,22 +40,22 @@ into another repo the same day.
 
 ```bash
 # Interactive — prompts "Goal: "
-./psp
+psp
 
 # Pipe a goal (no plan file needed)
-echo "reduce lines of code" | ./psp
+echo "reduce lines of code" | psp
 
 # Re-run a past goal
-./psp --history | fzf | ./psp
+psp --history | fzf | psp
 
 # Run your own plan
-./psp -p plan.txt
+psp -p plan.txt
 
 # 6 generations, Claude, with a time cap
-./psp -a claude -p plan.txt -g 6 -t 3600
+psp -a claude -p plan.txt -g 6 -t 3600
 
 # Preview the resolved command without running anything
-echo "add type hints" | ./psp --dry-run
+echo "add type hints" | psp --dry-run
 ```
 
 ---
@@ -56,6 +68,7 @@ Usage: psp [options] [plan-path]
 
   -a, --agent codex|claude|opencode   Agent to use (default: codex)
   -p, --plan PATH                     Plan file to replay
+      --install                       Install psp to ~/.local/bin and wire PATH in ~/.zshrc and ~/.bashrc
   -g, --generations N                 Generations to run (default: 10)
   -s, --sleep SECONDS                 Pause between generations (default: 2)
   -t, --time-budget SECONDS           Wall-clock cap; 0 = no limit
@@ -91,8 +104,9 @@ Override with `--agent-bin` / `--agent-args`, or env vars `AGENT_BIN` / `AGENT_A
 Bootstrap once, then edit:
 
 ```bash
-./psp --init          # one-shot: config + skills
-./psp --init-config   # config only
+psp --install         # one-shot install + PATH + config + skills
+psp --init            # config + skills only
+psp --init-config     # config only
 ```
 
 All keys are optional. Priority: `config.toml` < env vars < CLI flags.
@@ -103,7 +117,7 @@ agent       = "claude"    # codex | claude | opencode
 generations = 6
 # sleep       = 2
 # time_budget = 3600      # hard stop in seconds
-# output      = "discard" # discard | inherit
+# output      = "log"     # discard | inherit | log
 # agent_bin   = ""
 # agent_args  = ""
 # yolo        = false
@@ -117,7 +131,7 @@ PSP ships a set of reusable skill files in its `skills/` directory. Installing t
 once makes them available to every project you run PSP in:
 
 ```bash
-./psp --init-skills
+psp --init-skills
 ```
 
 This copies the bundled skills to `~/.psp/skills/`, skipping any that already exist.
@@ -155,8 +169,8 @@ Every real run appends one line to `~/.psp/history`:
 Browse and re-run:
 
 ```bash
-./psp --history              # list past goals
-./psp --history | fzf | ./psp   # pick one and re-run
+psp --history              # list past goals
+psp --history | fzf | psp   # pick one and re-run
 ```
 
 ---
@@ -187,7 +201,7 @@ CONSTRAINTS: work only inside this repo; use timeout on every scan.
 Start your own plan with:
 
 ```bash
-./psp --init-plan plan.txt   # writes a commented starter file
+psp --init-plan plan.txt   # writes a commented starter file
 ```
 
 Then edit `DOMAIN`, `GOAL`, and `CONSTRAINTS` to fit your repo. Keep the memory

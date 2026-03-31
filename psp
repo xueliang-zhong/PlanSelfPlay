@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PSP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+resolve_path() {
+  local path="$1" dir
+  while [[ -L "$path" ]]; do
+    dir="$(cd -P "$(dirname "$path")" && pwd)"
+    path="$(readlink "$path")"
+    [[ "$path" = /* ]] || path="$dir/$path"
+  done
+  dir="$(cd -P "$(dirname "$path")" && pwd)"
+  printf '%s/%s\n' "$dir" "$(basename "$path")"
+}
+
+PSP_SCRIPT_PATH="$(resolve_path "${BASH_SOURCE[0]}")"
+PSP_SCRIPT_DIR="$(cd -P "$(dirname "$PSP_SCRIPT_PATH")" && pwd)"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 agent="codex"
@@ -15,6 +27,7 @@ sleep_seconds="2"
 time_budget="0"
 output_mode="log"
 dry_run="0"
+install_mode=0
 plan_seen=0
 init_plan_path=""
 yolo_mode=0
@@ -115,6 +128,72 @@ init_all() {
   write_default_skills
 }
 
+path_block_state() {
+  local rc="$1" start='# >>> psp >>>' end='# <<< psp <<<'
+  local has_start=0 has_end=0
+  [[ -f "$rc" ]] || { printf 'missing\n'; return 0; }
+  grep -F "$start" "$rc" >/dev/null 2>&1 && has_start=1 || true
+  grep -F "$end" "$rc" >/dev/null 2>&1 && has_end=1 || true
+  if (( has_start && has_end )); then
+    printf 'present\n'
+  elif (( has_start || has_end )); then
+    printf 'partial\n'
+  else
+    printf 'absent\n'
+  fi
+}
+
+ensure_path_block() {
+  local rc="$1"
+  local state
+  state="$(path_block_state "$rc")"
+  case "$state" in
+    present)
+      printf 'PATH already configured in %s\n' "$rc"
+      return 0
+      ;;
+    partial)
+      quit "Refusing to edit $rc because it contains a partial PSP marker block"
+      ;;
+  esac
+  mkdir -p "$(dirname "$rc")"
+  touch "$rc"
+  [[ -s "$rc" ]] && printf '\n' >> "$rc"
+  cat >> "$rc" <<'EOF'
+# >>> psp >>>
+export PATH="$HOME/.local/bin:$PATH"
+# <<< psp <<<
+EOF
+  printf 'Updated %s\n' "$rc"
+}
+
+install_symlink() {
+  local bin_dir="${HOME}/.local/bin"
+  local link_path="${bin_dir}/psp"
+  mkdir -p "$bin_dir"
+  if [[ -L "$link_path" ]]; then
+    if [[ "$(resolve_path "$link_path")" == "$PSP_SCRIPT_PATH" ]]; then
+      printf 'Launcher already installed: %s -> %s\n' "$link_path" "$PSP_SCRIPT_PATH"
+      return 0
+    fi
+    quit "Refusing to overwrite existing symlink: $link_path"
+  fi
+  if [[ -e "$link_path" ]]; then
+    quit "Refusing to overwrite existing file: $link_path"
+  fi
+  ln -s "$PSP_SCRIPT_PATH" "$link_path"
+  printf 'Installed launcher: %s -> %s\n' "$link_path" "$PSP_SCRIPT_PATH"
+}
+
+install_self() {
+  printf 'Installing PSP from %s\n' "$PSP_SCRIPT_DIR"
+  init_all
+  install_symlink
+  ensure_path_block "${HOME}/.zshrc"
+  ensure_path_block "${HOME}/.bashrc"
+  printf 'Install complete. Open a new shell, then run: psp --help\n'
+}
+
 # Append one line to ~/.psp/history per run.
 append_history() {
   mkdir -p "$PSP_DIR"
@@ -135,6 +214,7 @@ When stdin is a pipe the goal is read from it; a plan file is optional.
 Options:
   --agent codex|claude|opencode, -a  Coding agent to use (default: codex)
   --plan PATH, -p                    Plan file to replay
+  --install                          Install psp to ~/.local/bin and wire PATH in ~/.zshrc and ~/.bashrc
   --init                             Initialise all ~/.psp files (config + skills) and exit
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.template.txt)
   --init-config                      Write a starter ~/.psp/config.toml and exit
@@ -224,6 +304,7 @@ dry_run="${DRY_RUN:-$dry_run}"
 while (( $# )); do
   case "$1" in
     -h|--help)       usage; exit 0 ;;
+    --install)       install_mode=1 ;;
     --init)          init_all; exit 0 ;;
     --init-config)   write_default_config; exit $? ;;
     --init-skills)   write_default_skills; exit $? ;;
@@ -251,9 +332,14 @@ while (( $# )); do
   shift
 done
 
+if (( install_mode )); then
+  install_self
+  exit 0
+fi
+
 # Read goal from stdin.
 #   Piped:       echo "improve tests" | psp   — read silently
-#   Interactive: ./psp with no plan/goal      — show "Goal: " prompt
+#   Interactive: psp with no plan/goal        — show "Goal: " prompt
 if [[ ! -t 0 ]]; then
   stdin_goal=$(cat)
   # If it looks like a history entry, extract the goal (last field).
