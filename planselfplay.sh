@@ -18,7 +18,7 @@ plan_seen=0
 init_plan_path=""
 yolo_mode=0
 results_path=""
-PSP_DIR="${HOME}/.psp"
+PSP_DIR="${PSP_DIR:-${HOME}/.psp}"
 
 quit()    { printf '%s\n' "$*" >&2; exit 1; }
 arg() { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
@@ -89,6 +89,29 @@ load_config() {
   done < "$cfg"
 }
 
+# Write a starter ~/.psp/config.toml (will not overwrite an existing file).
+write_default_config() {
+  local cfg="$PSP_DIR/config.toml"
+  mkdir -p "$PSP_DIR"
+  [[ -e "$cfg" ]] && { printf 'Config already exists: %s\n' "$cfg"; return 1; }
+  cat > "$cfg" <<'TOML'
+# ~/.psp/config.toml — PSP user defaults
+# Priority: this file < environment variables < command-line flags
+# All keys are optional; uncomment and edit the ones you want.
+
+# agent       = "codex"       # codex | claude | opencode
+# generations = 10            # number of self-play generations
+# population  = 1             # parallel agents per generation (-j)
+# sleep       = 2             # seconds to pause between generations
+# time_budget = 0             # wall-clock cap in seconds (0 = no limit)
+# stdout      = "discard"     # discard | inherit  (agent output)
+# agent_bin   = ""            # override the agent executable path
+# agent_args  = ""            # override the full agent argument string
+# yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
+TOML
+  printf 'Wrote default config to %s\n' "$cfg"
+}
+
 # Append one line to ~/.psp/history per run.
 append_history() {
   mkdir -p "$PSP_DIR"
@@ -110,6 +133,7 @@ Options:
   --agent codex|claude|opencode, -a  Coding agent to use (default: codex)
   --plan PATH, -p                    Plan file to replay
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.example.txt)
+  --init-config                      Write a starter ~/.psp/config.toml and exit
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
   --generations N, -g                Positive integer (default: 10)
   --population N, -jN                Parallel agents per generation (default: 1)
@@ -187,6 +211,7 @@ dry_run="${DRY_RUN:-$dry_run}"
 while (( $# )); do
   case "$1" in
     -h|--help)    usage; exit 0 ;;
+    --init-config) write_default_config; exit $? ;;
     --history)
       [[ -f "$PSP_DIR/history" ]] || { printf 'No history yet.\n' >&2; exit 0; }
       cut -f6 "$PSP_DIR/history"; exit 0 ;;

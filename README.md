@@ -38,6 +38,9 @@ If you want proof before theory, start here:
 echo "reduce lines of code" | ./psp
 echo "maximise function-level test coverage" | ./psp
 
+# Bootstrap your user config (sets defaults for agent, generations, etc.)
+./psp --init-config          # writes ~/.psp/config.toml
+
 # Create your own starter plan file
 ./psp --init-plan plan.txt
 
@@ -187,6 +190,20 @@ PSP works best with a tiered memory model: keep the full timestamped timeline, b
 
 
 ## Tips
+
+### User config (`~/.psp/config.toml`)
+
+Bootstrap once with `./psp --init-config`, then uncomment and edit the keys you want:
+
+```toml
+agent       = "claude"   # default agent for every run
+generations = 6          # shorter loops by default
+# population  = 2        # run two agents per generation
+# time_budget = 3600     # hard stop after 1 hour
+```
+
+Priority from lowest to highest: `config.toml` < environment variables < CLI flags.
+The file is never written automatically — only `--init-config` touches it.
 
 ### Running
 
