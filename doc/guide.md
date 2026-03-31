@@ -1,0 +1,240 @@
+# PlanSelfPlay — User Guide
+
+## What it is
+
+PlanSelfPlay keeps your agent policy in a plain-text PLAN file and replays it
+with a short shell script. Improvements land as ordinary diffs, commits, and
+notes instead of disappearing into framework internals. You can read the whole
+setup in a few minutes, see what each generation changed, and copy the pattern
+into another repo the same day.
+
+---
+
+## Files
+
+| File | Role |
+| --- | --- |
+| `planselfplay.sh` | Driver: replays a PLAN through the chosen agent |
+| `psp` | Symlink to `planselfplay.sh` for shorter daily use |
+| `plan.example.txt` | Bundled example plan with all directives |
+| `~/.psp/config.toml` | User defaults (lowest priority) |
+| `~/.psp/history` | Append-only run log |
+
+---
+
+## Quick examples
+
+```bash
+# Interactive — prompts "Goal: "
+./psp
+
+# Pipe a goal (no plan file needed)
+echo "reduce lines of code" | ./psp
+
+# Re-run a past goal
+./psp --history | fzf | ./psp
+
+# Run your own plan
+./psp -p plan.txt
+
+# 6 generations, Claude, with a time cap
+./psp -a claude -p plan.txt -g 6 -t 3600
+
+# Preview the resolved command without running anything
+echo "add type hints" | ./psp --dry-run
+```
+
+---
+
+## All options
+
+```
+Usage: psp [options] [plan-path]
+       echo "GOAL" | psp [options]
+
+  -a, --agent codex|claude|opencode   Agent to use (default: codex)
+  -p, --plan PATH                     Plan file to replay
+  -g, --generations N                 Generations to run (default: 10)
+  -s, --sleep SECONDS                 Pause between generations (default: 2)
+  -t, --time-budget SECONDS           Wall-clock cap; 0 = no limit
+  -o, --stdout discard|inherit        Agent stdout handling (default: discard)
+  -x, --agent-args STRING             Override full agent argument string
+      --agent-bin PATH                Override agent executable
+      --yolo                          Skip permission prompts (use with care)
+      --init-plan [PATH]              Write a starter plan file and exit
+      --init-config                   Write ~/.psp/config.toml and exit
+      --dry-run                       Print resolved command and exit
+      --history                       Print past goals and exit
+  -h, --help                          Show help
+```
+
+### Agent presets
+
+Each agent is pre-configured for non-interactive stdin use:
+
+| Agent | Default command |
+| --- | --- |
+| `codex` | `codex --full-auto exec -` |
+| `claude` | `claude -p -` |
+| `opencode` | `opencode run -` |
+
+Override with `--agent-bin` / `--agent-args`, or env vars `AGENT_BIN` / `AGENT_ARGS`.
+
+---
+
+## User config (`~/.psp/config.toml`)
+
+Bootstrap once, then edit:
+
+```bash
+./psp --init-config
+```
+
+All keys are optional. Priority: `config.toml` < env vars < CLI flags.
+
+```toml
+# ~/.psp/config.toml
+agent       = "claude"    # codex | claude | opencode
+generations = 6
+# sleep       = 2
+# time_budget = 3600      # hard stop in seconds
+# stdout      = "discard" # discard | inherit
+# agent_bin   = ""
+# agent_args  = ""
+# yolo        = false
+```
+
+---
+
+## Run history
+
+Every real run appends one line to `~/.psp/history`:
+
+```
+2026-03-31T09:00:00Z  claude  /your/repo  g=6  improve test coverage
+```
+
+Browse and re-run:
+
+```bash
+./psp --history              # list past goals
+./psp --history | fzf | ./psp   # pick one and re-run
+```
+
+---
+
+## The PLAN file
+
+A plan is a plain-text file the agent reads as its instructions. The built-in
+template (used when you pipe a goal without `--plan`) contains:
+
+```text
+DOMAIN: the current working directory and its contents.
+GOAL: <your goal>
+LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.
+LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes.
+APPLY SKILLS: read any skill_*.md files and apply relevant ones.
+DEAD ENDS: read FAILED_PATHS.md; never re-try listed approaches.
+STRATEGY: 90% refine the best path / 10% test one mutation.
+RETHINK: after the first design, pause and reconsider.
+AT TASK COMPLETION: write agent_<topic>_memory.md.
+RESULTS LEDGER: the runner maintains results.tsv.
+UPDATE CURRENT MEMORY: merge new lessons into CURRENT_MEMORY.md.
+WRITE SKILLS: promote reusable techniques into skill_<topic>.md.
+SKILL HYGIENE: patch existing skills; create new ones only for new techniques.
+SELECTION: commit if better; git reset otherwise.
+CONSTRAINTS: work only inside this repo; use timeout on every scan.
+```
+
+Start your own plan with:
+
+```bash
+./psp --init-plan plan.txt   # writes a commented starter file
+```
+
+Then edit `DOMAIN`, `GOAL`, and `CONSTRAINTS` to fit your repo. Keep the memory
+and strategy directives unless you intentionally want a different loop.
+
+---
+
+## Tiered memory
+
+PSP artifacts form a natural hierarchy. Agents write lower tiers automatically;
+you promote upward when a lesson earns wider reuse.
+
+| Tier | File | When | Scope |
+| --- | --- | --- | --- |
+| 1 | `agent_<timestamp>_<topic>.md` | After each run | Run-specific episode |
+| 2 | `CURRENT_MEMORY.md` | When a lesson helps the next few runs | Repo-wide, near-term |
+| 3 | `skill_<topic>.md` | When a technique is reusable across many runs | Broad, durable |
+| 4 | `FAILED_PATHS.md` | When a failure pattern is clear | Repo-wide avoidance |
+| 5 | `results.tsv` | Appended by the runner each generation | Audit trail |
+
+**Rule:** never promote automatically — promotion always requires judgment.
+
+---
+
+## Tips
+
+**Start small.** Run `--generations 2` first to check the agent reads the plan
+and produces sensible output before committing to a long loop.
+
+**Watch live output.** Add `--stdout inherit` to print agent output to the
+terminal, useful when debugging a new plan.
+
+**Inspect the effective plan.** When a goal is piped in, a `plan.tmp.*` file is
+written for the duration of the run. Open it to confirm the `GOAL:` line before
+the first generation finishes.
+
+**Edit the plan mid-run.** Changes to `plan.txt` take effect at the next
+generation boundary without restarting the loop.
+
+**Time budget.** `--time-budget 3600` stops the loop cleanly before starting a
+generation that would exceed the cap — useful for overnight runs or CI.
+
+**`--yolo` (use with care).** Passes the agent's permission-bypass flag. The
+agent will run destructive commands without asking. Commit your work and use a
+throwaway branch first.
+
+---
+
+## How the runner loop works
+
+```bash
+for generation in 1..N:
+    run: agent < plan > /dev/null
+    if HEAD advanced: record "committed" in results.tsv
+    else:             record "no_commit"
+    sleep between generations
+```
+
+The plan is written to a temp file per run (built-in template) or read directly
+(explicit `--plan`). The agent receives it on stdin. All agent output goes to
+`/dev/null` by default (`--stdout discard`); use `--stdout inherit` to see it.
+
+---
+
+## Mapping PLAN directives to ML concepts
+
+| PLAN directive | ML / optimization concept | Reference |
+| --- | --- | --- |
+| `DOMAIN` | State space / problem formulation | [State space](https://en.wikipedia.org/wiki/State_space_(computer_science)) |
+| `GOAL` | Loss / fitness function | [Fitness function](https://en.wikipedia.org/wiki/Fitness_function) |
+| `LEARN FROM CURRENT MEMORY` | Working memory | [Working memory](https://en.wikipedia.org/wiki/Working_memory) |
+| `LEARN FROM PREVIOUS RUNS` | Episodic memory retrieval | [Reflexion](https://arxiv.org/abs/2303.11366), [ExpeL](https://arxiv.org/abs/2308.10144) |
+| `APPLY SKILLS` | Procedural memory | [Voyager](https://arxiv.org/abs/2305.16291) |
+| `DEAD ENDS` | Negative experience / tabu search | [Tabu search](https://en.wikipedia.org/wiki/Tabu_search) |
+| `STRATEGY` | Exploration–exploitation | [Exploration–exploitation](https://en.wikipedia.org/wiki/Exploration%E2%80%93exploitation_dilemma) |
+| `RETHINK` | Self-critique / iterative refinement | [Self-Refine](https://arxiv.org/abs/2303.17651), [Tree of Thoughts](https://arxiv.org/abs/2305.10601) |
+| `AT TASK COMPLETION` | Episodic write-back | [ExpeL](https://arxiv.org/abs/2308.10144) |
+| `WRITE SKILLS` | Skill distillation | [Voyager](https://arxiv.org/abs/2305.16291) |
+| `SELECTION` | Selection pressure / hill climbing | [Hill climbing](https://en.wikipedia.org/wiki/Hill_climbing) |
+| `CONSTRAINTS` | Feasible region | [Constraint satisfaction](https://en.wikipedia.org/wiki/Constraint_satisfaction_problem) |
+
+---
+
+## Inspiration
+
+Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
+The difference here is the deliberate commitment to plain-text control and a
+small shell loop — easy to inspect, fork, and modify.
