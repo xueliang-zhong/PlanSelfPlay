@@ -107,6 +107,14 @@ TOML
   printf 'Wrote default config to %s\n' "$cfg"
 }
 
+# Initialise all ~/.psp files in one shot (--init).
+init_all() {
+  mkdir -p "$PSP_DIR/skills"
+  printf 'PSP dir: %s\n' "$PSP_DIR"
+  write_default_config || true   # non-fatal if config already exists
+  write_default_skills
+}
+
 # Append one line to ~/.psp/history per run.
 append_history() {
   mkdir -p "$PSP_DIR"
@@ -127,6 +135,7 @@ When stdin is a pipe the goal is read from it; a plan file is optional.
 Options:
   --agent codex|claude|opencode, -a  Coding agent to use (default: codex)
   --plan PATH, -p                    Plan file to replay
+  --init                             Initialise all ~/.psp files (config + skills) and exit
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.example.txt)
   --init-config                      Write a starter ~/.psp/config.toml and exit
   --init-skills                      Install bundled skills into ~/.psp/skills/ and exit
@@ -215,6 +224,7 @@ dry_run="${DRY_RUN:-$dry_run}"
 while (( $# )); do
   case "$1" in
     -h|--help)       usage; exit 0 ;;
+    --init)          init_all; exit 0 ;;
     --init-config)   write_default_config; exit $? ;;
     --init-skills)   write_default_skills; exit $? ;;
     --history)

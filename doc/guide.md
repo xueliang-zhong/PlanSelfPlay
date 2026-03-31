@@ -63,6 +63,7 @@ Usage: psp [options] [plan-path]
   -x, --agent-args STRING             Override full agent argument string
       --agent-bin PATH                Override agent executable
       --yolo                          Skip permission prompts (use with care)
+      --init                          Initialise all ~/.psp files (config + skills) and exit
       --init-plan [PATH]              Write a starter plan file and exit
       --init-config                   Write ~/.psp/config.toml and exit
       --init-skills                   Install bundled skills into ~/.psp/skills/ and exit
@@ -90,7 +91,8 @@ Override with `--agent-bin` / `--agent-args`, or env vars `AGENT_BIN` / `AGENT_A
 Bootstrap once, then edit:
 
 ```bash
-./psp --init-config
+./psp --init          # one-shot: config + skills
+./psp --init-config   # config only
 ```
 
 All keys are optional. Priority: `config.toml` < env vars < CLI flags.

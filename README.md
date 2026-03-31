@@ -9,8 +9,8 @@ Works with **codex**, **claude**, and **opencode** out of the box.
 ```bash
 echo "improve test coverage" | ./psp        # run with a goal
 ./psp -p plan.txt -g 6                      # run your own plan
+./psp --init                                # set up ~/.psp (config + skills)
 ./psp --init-plan plan.txt                  # write a starter plan
-./psp --init-config                         # write ~/.psp/config.toml
 ./psp --history | fzf | ./psp              # re-run a past goal
 ./psp --help                                # all options
 ```
