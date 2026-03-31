@@ -132,6 +132,10 @@ path_block_state() {
   local rc="$1" start='# >>> psp >>>' end='# <<< psp <<<'
   local has_start=0 has_end=0
   [[ -f "$rc" ]] || { printf 'missing\n'; return 0; }
+  grep -Fx 'export PATH="$HOME/.local/bin:$PATH"' "$rc" >/dev/null 2>&1 && {
+    printf 'present\n'
+    return 0
+  }
   grep -F "$start" "$rc" >/dev/null 2>&1 && has_start=1 || true
   grep -F "$end" "$rc" >/dev/null 2>&1 && has_end=1 || true
   if (( has_start && has_end )); then
