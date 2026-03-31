@@ -419,10 +419,10 @@ for ((generation=1; generation<=generations; generation++)); do
   generation_end="$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
   if [[ "$generation_end" == "$generation_start" ]]; then
     append_result "$generation" "no_commit" "-" "no new commit"
-    printf "| PSP %*d/%-*d | no commit | took: %ds |\n" "$gen_w" "$generation" "$gen_w" "$generations" "$took"
+    printf "| PSP %*d/%-*d | running -> no commit | took: %ds |\n" "$gen_w" "$generation" "$gen_w" "$generations" "$took"
   else
     append_result "$generation" "committed" "$generation_end" "HEAD advanced"
-    printf "| PSP %*d/%-*d | committed %s | took: %ds |\n" "$gen_w" "$generation" "$gen_w" "$generations" "${generation_end:0:7}" "$took"
+    printf "| PSP %*d/%-*d | running -> committed %s | took: %ds |\n" "$gen_w" "$generation" "$gen_w" "$generations" "${generation_end:0:7}" "$took"
   fi
   (( generation < generations )) && sleep "$sleep_seconds"
 done
