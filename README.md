@@ -17,7 +17,7 @@ for ((i=0; i<$GENERATIONS; i++)); do
 done
 ```
 
-That's it. PSP wraps this loop with a PLAN template, run history, per-generation logs, and support for codex, claude, and opencode.
+That's it. PSP wraps this loop with a [PLAN template](plan.template.txt), run history, per-generation logs, and support for codex, claude, and opencode.
 
 ## Install
 
