@@ -1,23 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
-agent="${AGENT:-codex}"
-plan_path="${PLAN_PATH:-${PWD}/plan.example.txt}"
+
+# ── Defaults ──────────────────────────────────────────────────────────────────
+agent="codex"
+plan_path="${PWD}/plan.example.txt"
 plan_explicit=0; [[ -n "${PLAN_PATH:-}" ]] && plan_explicit=1
 agent_bin=""
 agent_args_text=""
-goal_text="${GOAL:-}"
-generations="${GENERATIONS:-10}"
-population="${POPULATION:-1}"
-sleep_seconds="${SLEEP_SECONDS:-2}"
-time_budget="${TIME_BUDGET:-0}"
-stdout_mode="${STDOUT_MODE:-discard}"
-dry_run="${DRY_RUN:-0}"
+goal_text=""
+generations="10"
+population="1"
+sleep_seconds="2"
+time_budget="0"
+stdout_mode="discard"
+dry_run="0"
 plan_seen=0
 init_plan_path=""
 yolo_mode=0
 results_path=""
+PSP_DIR="${HOME}/.psp"
 
-quit() { printf '%s\n' "$*" >&2; exit 1; }
+quit()    { printf '%s\n' "$*" >&2; exit 1; }
 arg() { [[ $# -ge 2 && -n "${2:-}" ]] || quit "Missing value for $1"; printf '%s\n' "$2"; }
 set_plan() { (( plan_seen == 0 )) || quit "Provide the plan path once"; plan_seen=1; plan_explicit=1; plan_path="$1"; }
 ensure_results_ledger() {
@@ -56,6 +59,46 @@ prepare_parallel_slot() {
       || quit "Could not clear stale parallel branch: $branch"
   fi
 }
+# Load ~/.psp/config.toml — flat key = value, TOML subset.
+# Priority: defaults < config.toml < env vars < CLI flags.
+load_config() {
+  local cfg="$PSP_DIR/config.toml"
+  [[ -f "$cfg" ]] || return 0
+  local line key val
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # skip blank lines, comments, section headers
+    [[ "$line" =~ ^[[:space:]]*(#|$|\[) ]] && continue
+    [[ "$line" =~ ^[[:space:]]*([a-zA-Z_][a-zA-Z0-9_-]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]] || continue
+    key="${BASH_REMATCH[1]}"
+    val="${BASH_REMATCH[2]}"
+    # strip surrounding quotes (single or double)
+    if [[ "$val" == \"*\" ]]; then val="${val#\"}"; val="${val%\"}";
+    elif [[ "$val" == \'*\' ]]; then val="${val#\'}"; val="${val%\'}";
+    else val="${val%%  #*}"; val="${val%[[:space:]]}"; fi  # strip unquoted inline comment
+    case "$key" in
+      agent)        agent="$val" ;;
+      generations)  generations="$val" ;;
+      population)   population="$val" ;;
+      sleep)        sleep_seconds="$val" ;;
+      time_budget)  time_budget="$val" ;;
+      stdout)       stdout_mode="$val" ;;
+      agent_bin)    agent_bin="$val" ;;
+      agent_args)   agent_args_text="$val" ;;
+      yolo)         [[ "$val" == "true" ]] && yolo_mode=1 ;;
+    esac
+  done < "$cfg"
+}
+
+# Append one line to ~/.psp/history per run.
+append_history() {
+  mkdir -p "$PSP_DIR"
+  printf '%s\t%s\t%s\tg=%s\tj=%s\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$agent" "$PWD" "$generations" "$population" \
+    "${goal_text:-(plan: ${plan_display})}" \
+    >> "$PSP_DIR/history"
+}
+
 usage() {
   cat <<EOF
 Usage: ${0##*/} [options] [plan-path]
@@ -76,6 +119,7 @@ Options:
   --agent-bin PATH                   Agent executable override
   --agent-args STRING, -x            Full agent args override (replaces preset defaults)
   --dry-run                          Print the resolved command and exit
+  --history                          Print ~/.psp/history and exit (pipe through fzf | psp to re-run)
   -h, --help                         Show this help text
 
 Agent presets (overridable via --agent-args):
@@ -83,6 +127,8 @@ Agent presets (overridable via --agent-args):
   claude    -> claude -p -
   opencode  -> opencode run -
 
+Config:      ~/.psp/config.toml  (key = value defaults, lowest priority)
+             ~/.psp/history      (append-only run log; browse with --history)
 Environment: AGENT PLAN_PATH GOAL AGENT_BIN AGENT_ARGS GENERATIONS POPULATION SLEEP_SECONDS TIME_BUDGET STDOUT_MODE DRY_RUN
              (legacy: CODEX_BIN CODEX_ARGS map to AGENT_BIN AGENT_ARGS for codex)
 EOF
@@ -126,9 +172,24 @@ CONSTRAINTS: work only inside this repo; never scan outside it; wrap every \`fin
 PLAN_TEMPLATE
 }
 
+# ── Config file then env vars (env vars win over config.toml) ─────────────────
+load_config
+agent="${AGENT:-$agent}"
+goal_text="${GOAL:-$goal_text}"
+generations="${GENERATIONS:-$generations}"
+population="${POPULATION:-$population}"
+sleep_seconds="${SLEEP_SECONDS:-$sleep_seconds}"
+time_budget="${TIME_BUDGET:-$time_budget}"
+stdout_mode="${STDOUT_MODE:-$stdout_mode}"
+dry_run="${DRY_RUN:-$dry_run}"
+[[ -n "${PLAN_PATH:-}" ]] && { plan_path="$PLAN_PATH"; plan_explicit=1; }
+
 while (( $# )); do
   case "$1" in
     -h|--help)    usage; exit 0 ;;
+    --history)
+      [[ -f "$PSP_DIR/history" ]] || { printf 'No history yet.\n' >&2; exit 0; }
+      cat "$PSP_DIR/history"; exit 0 ;;
     --dry-run)    dry_run=1 ;;
     -a|--agent)      agent="$(arg "$@")"; shift ;;
     -p|--plan)       set_plan "$(arg "$@")"; shift ;;
@@ -163,6 +224,11 @@ done
 #   Interactive: ./psp with no plan/goal      — show "Goal: " prompt
 if [[ ! -t 0 ]]; then
   stdin_goal=$(cat)
+  # If the line looks like a history entry (psp --history | fzf | psp),
+  # extract the goal from the last tab-separated field.
+  if [[ "$stdin_goal" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'\t'[^$'\t']*$'\t'[^$'\t']*$'\t'g=[^$'\t']*$'\t'j=[^$'\t']*$'\t'(.*) ]]; then
+    stdin_goal="${BASH_REMATCH[1]}"
+  fi
   [[ -n "$stdin_goal" ]] && goal_text="$stdin_goal"
 elif [[ -z "$goal_text" && "$plan_explicit" == 0 ]]; then
   printf 'Goal: ' >&2
@@ -274,6 +340,7 @@ ensure_results_ledger
 
 trap '[[ -n "$tmp_plan" ]] && rm -f "$tmp_plan"; [[ -n "$repo_root" ]] && { git worktree prune -q 2>/dev/null || true; rm -rf "${repo_root}/.psp"; }' EXIT
 
+append_history
 psp_start_time=$SECONDS
 for ((generation=1; generation<=generations; generation++)); do
   if (( time_budget > 0 && SECONDS - psp_start_time >= time_budget )); then
