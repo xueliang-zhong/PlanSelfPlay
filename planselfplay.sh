@@ -13,7 +13,7 @@ goal_text=""
 generations="10"
 sleep_seconds="2"
 time_budget="0"
-output_mode="discard"
+output_mode="log"
 dry_run="0"
 plan_seen=0
 init_plan_path=""
@@ -99,7 +99,7 @@ write_default_config() {
 # generations = 10            # number of self-play generations
 # sleep       = 2             # seconds to pause between generations
 # time_budget = 0             # wall-clock cap in seconds (0 = no limit)
-# output      = "discard"     # discard | inherit | log  (log = per-generation files in $PWD)
+# output      = "log"         # discard | inherit | log  (default: log = per-generation files in $PWD)
 # agent_bin   = ""            # override the agent executable path
 # agent_args  = ""            # override the full agent argument string
 # yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
@@ -143,7 +143,7 @@ Options:
   --generations N, -g                Positive integer (default: 10)
   --sleep SECONDS, -s                Non-negative delay between generations
   --time-budget SECONDS, -t          Stop after this many wall-clock seconds (0 = no limit)
-  --output discard|inherit|log, -o   Agent output handling (log = per-generation files)
+  --output discard|inherit|log, -o   Agent output handling (default: log = per-generation files)
   --agent-bin PATH                   Agent executable override
   --agent-args STRING, -x            Full agent args override (replaces preset defaults)
   --dry-run                          Print the resolved command and exit
@@ -311,7 +311,7 @@ agent_command=("$agent_bin" "${agent_args[@]}")
 
 plan_display="$plan_path"
 [[ -n "$goal_text" && "$plan_explicit" == 0 ]] && plan_display="(builtin)"
-printf 'PSP Step | plan: %s | goal: %s | agent: %s | generations: %s\n' \
+printf 'PSP RUN | plan: %s | goal: %s | agent: %s | generations: %s\n' \
   "$plan_display" "${goal_text:-(none)}" "$agent" "$generations"
 if [[ "$dry_run" == 1 ]]; then
   printf 'PSP DRY RUN |'; printf ' %q' "${agent_command[@]}"

@@ -59,7 +59,7 @@ Usage: psp [options] [plan-path]
   -g, --generations N                 Generations to run (default: 10)
   -s, --sleep SECONDS                 Pause between generations (default: 2)
   -t, --time-budget SECONDS           Wall-clock cap; 0 = no limit
-  -o, --output discard|inherit|log    Agent output handling (log = per-generation files)
+  -o, --output discard|inherit|log    Agent output handling (default: log = per-generation files)
   -x, --agent-args STRING             Override full agent argument string
       --agent-bin PATH                Override agent executable
       --yolo                          Skip permission prompts (use with care)
@@ -265,9 +265,9 @@ PSP 2/9 | no commit
 
 | Value | Behaviour |
 | --- | --- |
-| `discard` (default) | Agent output is discarded |
+| `log` (default) | Each generation's output is saved to a file in `$PWD` |
+| `discard` | Agent output is discarded |
 | `inherit` | Agent output is printed to the terminal |
-| `log` | Each generation's output is saved to a file in `$PWD` |
 
 With `--output log`, a log file is created for each generation:
 
