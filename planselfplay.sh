@@ -45,9 +45,9 @@ load_config() {
     [[ "$line" =~ ^[[:space:]]*(#|$|\[) ]] && continue
     [[ "$line" =~ ^[[:space:]]*([a-zA-Z_][a-zA-Z0-9_-]*)[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$ ]] || continue
     key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
-    if   [[ "$val" == \"*\" ]]; then val="${val#\"}"; val="${val%\"}";
-    elif [[ "$val" == \'*\' ]]; then val="${val#\'}"; val="${val%\'}";
-    else val="${val%%  #*}"; val="${val%[[:space:]]}"; fi
+    if   [[ "$val" == '"'* ]]; then val="${val#\"}"; val="${val%%\"*}";
+    elif [[ "$val" == "'"* ]]; then val="${val#\'}"; val="${val%%\'*}";
+    else val="${val%%[[:space:]]*#*}"; val="${val%"${val##*[! $'\t']}"}"; fi
     case "$key" in
       agent)        agent="$val" ;;
       generations)  generations="$val" ;;
