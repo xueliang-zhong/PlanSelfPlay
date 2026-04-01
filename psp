@@ -380,6 +380,7 @@ Options:
   --agent-args STRING, -x            Full agent args override (replaces preset defaults)
   --goal TEXT, -G                    Set the goal directly (stdin takes priority if piped)
   --config-show                      Print resolved config with source of each value and exit
+  --generate-completion              Print a shell completion script for the current shell (source it with: source <(psp --generate-completion))
   --dry-run                          Print the resolved command and exit
   --history                          Print ~/.psp/history and exit (pipe through fzf | psp to re-run)
   --continue, -C                     Re-run the last goal from history (like !! in bash)
@@ -396,6 +397,10 @@ Agent presets (overridable via --agent-args):
 
 Config:      ~/.psp/config.toml  (key = value defaults; CLI flags override)
              ~/.psp/history      (append-only run log; browse with --history)
+
+Tab completion in bash/zsh:
+  source <(psp --generate-completion)
+
 """
     )
 
@@ -567,6 +572,81 @@ def print_logs(workdir: Path) -> int:
     return 0
 
 
+_COMPLETION_BASH = """\
+_psp_completion() {
+    local cur prev
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+    case "$prev" in
+        --agent|-a)       COMPREPLY=($(compgen -W "codex claude opencode" -- "$cur")); return ;;
+        --output|-o)      COMPREPLY=($(compgen -W "discard inherit log" -- "$cur")); return ;;
+        --keep-logs)      COMPREPLY=($(compgen -W "always session never" -- "$cur")); return ;;
+        --plan|-p|--agent-bin|--goal|-G)
+                          COMPREPLY=($(compgen -f -- "$cur")); return ;;
+        --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x) return ;;
+    esac
+    local flags="--agent --plan --install --init --init-plan --init-config --yolo \\
+        --keep-logs --generations --sleep --time-budget --output --agent-bin --agent-args \\
+        --goal --config-show --generate-completion --dry-run --history --continue --fzf \\
+        --logs --results --version --help \\
+        -a -p -i -g -s -t -o -x -G -C -V -h"
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=($(compgen -W "$flags" -- "$cur"))
+    else
+        COMPREPLY=($(compgen -f -- "$cur"))
+    fi
+}
+complete -F _psp_completion psp
+"""
+
+_COMPLETION_ZSH = """\
+_psp() {
+    local -a args
+    args=(
+        '(-a --agent)'{-a,--agent}'[coding agent to use]:agent:(codex claude opencode)'
+        '(-p --plan)'{-p,--plan}'[plan file]:file:_files'
+        '--install[install psp to ~/.local/bin]'
+        '--init[initialise config]'
+        '(-i --init-plan)'{-i,--init-plan}'[write starter plan]:file:_files'
+        '--init-config[write config.toml]'
+        '--yolo[skip permission prompts]'
+        '--keep-logs[log retention]:mode:(always session never)'
+        '(-g --generations)'{-g,--generations}'[number of generations]:n'
+        '(-s --sleep)'{-s,--sleep}'[sleep between generations]:seconds'
+        '(-t --time-budget)'{-t,--time-budget}'[wall-clock cap]:seconds'
+        '(-o --output)'{-o,--output}'[output mode]:mode:(discard inherit log)'
+        '--agent-bin[agent executable]:file:_files'
+        '(-x --agent-args)'{-x,--agent-args}'[agent args override]:string'
+        '(-G --goal)'{-G,--goal}'[set goal directly]:text'
+        '--config-show[print resolved config]'
+        '--generate-completion[print shell completion script]'
+        '--dry-run[print resolved command and exit]'
+        '--history[print past goals]'
+        '(-C --continue)'{-C,--continue}'[re-run last goal]'
+        '--fzf[interactive goal selection]'
+        '--logs[print log paths]'
+        '--results[print results.tsv rows]'
+        '(-V --version)'{-V,--version}'[print version]'
+        '(-h --help)'{-h,--help}'[show help]'
+        '*:plan file:_files'
+    )
+    _arguments -s $args
+}
+compdef _psp psp
+"""
+
+
+def generate_completion() -> int:
+    # Emit both scripts: zsh guards with $ZSH_VERSION, bash runs unconditionally.
+    # Safe to source in either shell with: source <(psp --generate-completion)
+    sys.stdout.write("if [ -n \"$ZSH_VERSION\" ]; then\n")
+    sys.stdout.write(_COMPLETION_ZSH)
+    sys.stdout.write("else\n")
+    sys.stdout.write(_COMPLETION_BASH)
+    sys.stdout.write("fi\n")
+    return 0
+
+
 def parse_args(opts: Options, argv: list[str]) -> int | None:
     index = 0
     prog = Path(sys.argv[0]).name
@@ -602,6 +682,8 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             opts.results_mode = 1
         elif current == "--config-show":
             opts.config_show = 1
+        elif current == "--generate-completion":
+            return generate_completion()
         elif current == "--dry-run":
             opts.dry_run = 1
         elif current in ("-a", "--agent"):
