@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
@@ -128,6 +128,8 @@ class Options:
     goal_flag: str = ""
     keep_logs: str = "session"
     results_path: str = ""
+    config_show: int = 0
+    _sources: dict = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.plan_path:
@@ -174,6 +176,8 @@ def load_config(opts: Options) -> None:
     if not cfg.is_file():
         return
 
+    label = f"~/.psp/config.toml"
+
     for raw_line in cfg.read_text(encoding="utf-8").splitlines():
         stripped = raw_line.lstrip()
         if not stripped or stripped.startswith("#") or stripped.startswith("["):
@@ -192,27 +196,38 @@ def load_config(opts: Options) -> None:
 
         if key == "agent":
             opts.agent = value
+            opts._sources["agent"] = label
         elif key == "generations":
             opts.generations = value
+            opts._sources["generations"] = label
         elif key == "sleep":
             opts.sleep_seconds = value
+            opts._sources["sleep"] = label
         elif key == "time_budget":
             opts.time_budget = value
+            opts._sources["time_budget"] = label
         elif key == "output":
             opts.output_mode = value
+            opts._sources["output"] = label
         elif key == "agent_bin":
             opts.agent_bin = value
+            opts._sources["agent_bin"] = label
         elif key == "agent_args":
             opts.agent_args_text = value
+            opts._sources["agent_args"] = label
         elif key == "yolo" and value == "true":
             opts.yolo_mode = 1
+            opts._sources["yolo"] = label
         elif key in ("keep_logs", "keep_log"):
             if value in ("always", "session", "never"):
                 opts.keep_logs = value
+                opts._sources["keep_logs"] = label
             elif value == "true":
                 opts.keep_logs = "always"
+                opts._sources["keep_logs"] = label
             elif value == "false":
                 opts.keep_logs = "session"
+                opts._sources["keep_logs"] = label
 
 
 def write_default_config(psp_dir: Path) -> int:
@@ -364,6 +379,7 @@ Options:
   --agent-bin PATH                   Agent executable override
   --agent-args STRING, -x            Full agent args override (replaces preset defaults)
   --goal TEXT, -G                    Set the goal directly (stdin takes priority if piped)
+  --config-show                      Print resolved config with source of each value and exit
   --dry-run                          Print the resolved command and exit
   --history                          Print ~/.psp/history and exit (pipe through fzf | psp to re-run)
   --continue, -C                     Re-run the last goal from history (like !! in bash)
@@ -584,10 +600,13 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             opts.logs_mode = 1
         elif current == "--results":
             opts.results_mode = 1
+        elif current == "--config-show":
+            opts.config_show = 1
         elif current == "--dry-run":
             opts.dry_run = 1
         elif current in ("-a", "--agent"):
             opts.agent = arg_value(argv, index, current)
+            opts._sources["agent"] = current
             index += 1
         elif current in ("-p", "--plan"):
             set_plan(opts, arg_value(argv, index, current))
@@ -600,33 +619,43 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
                 opts.init_plan_path = "plan.template.txt"
         elif current == "--yolo":
             opts.yolo_mode = 1
+            opts._sources["yolo"] = current
         elif current == "--keep-logs":
             val = arg_value(argv, index, current)
             if val not in ("always", "session", "never"):
                 quit_with(f"--keep-logs must be always, session, or never (got: {val!r})")
             opts.keep_logs = val
+            opts._sources["keep_logs"] = current
             index += 1
         elif current == "--keep-log":
             opts.keep_logs = "always"
+            opts._sources["keep_logs"] = current
         elif current in ("-g", "--generations"):
             opts.generations = arg_value(argv, index, current)
+            opts._sources["generations"] = current
             index += 1
         elif current.startswith("-g") and current != "-g":
             opts.generations = current[2:]
+            opts._sources["generations"] = current
         elif current in ("-s", "--sleep"):
             opts.sleep_seconds = arg_value(argv, index, current)
+            opts._sources["sleep"] = current
             index += 1
         elif current in ("-t", "--time-budget"):
             opts.time_budget = arg_value(argv, index, current)
+            opts._sources["time_budget"] = current
             index += 1
         elif current in ("-o", "--output"):
             opts.output_mode = arg_value(argv, index, current)
+            opts._sources["output"] = current
             index += 1
         elif current in ("--agent-bin", "--codex-bin"):
             opts.agent_bin = arg_value(argv, index, current)
+            opts._sources["agent_bin"] = current
             index += 1
         elif current in ("-x", "--agent-args", "--codex-args"):
             opts.agent_args_text = arg_value(argv, index, current)
+            opts._sources["agent_args"] = current
             index += 1
         elif current == "--":
             index += 1
@@ -646,6 +675,48 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
     if opts.results_mode:
         return print_results(opts.psp_dir)
     return None
+
+
+# Keys shown by --config-show, in display order
+_CONFIG_SHOW_KEYS = [
+    ("agent",       "agent",           "codex"),
+    ("generations", "generations",     "10"),
+    ("sleep",       "sleep_seconds",   "2"),
+    ("time_budget", "time_budget",     "0"),
+    ("output",      "output_mode",     "log"),
+    ("agent_bin",   "agent_bin",       ""),
+    ("agent_args",  "agent_args_text", ""),
+    ("yolo",        "yolo_mode",       "false"),
+    ("keep_logs",   "keep_logs",       "session"),
+]
+
+
+def print_config_show(opts: Options) -> int:
+    psp_dir_label = str(opts.psp_dir).replace(str(Path.home()), "~")
+    config_file_label = f"{psp_dir_label}/config.toml"
+    rows = []
+    key_width = max(len(k) for k, _, _ in _CONFIG_SHOW_KEYS)
+    for cfg_key, attr, default in _CONFIG_SHOW_KEYS:
+        raw = getattr(opts, attr)
+        if attr == "yolo_mode":
+            value = "true" if raw else "false"
+        else:
+            value = str(raw) if raw else default
+        source = opts._sources.get(cfg_key, "default")
+        rows.append((cfg_key, value, source))
+
+    for cfg_key, value, source in rows:
+        source_note = f"  ({source})" if source != "default" else c("  (default)", DIM)
+        print(f"  {cfg_key:<{key_width}} = {c(value, CYAN)}{source_note}")
+
+    cfg_path = opts.psp_dir / "config.toml"
+    print()
+    if cfg_path.is_file():
+        print(c(f"  config file: {config_file_label}", DIM))
+    else:
+        print(c(f"  config file: {config_file_label} (not found)", DIM))
+    print(c(f"  priority: default < {config_file_label} < CLI flags", DIM))
+    return 0
 
 
 def read_goal(opts: Options) -> None:
@@ -982,6 +1053,9 @@ def main(argv: list[str]) -> int:
     parsed = parse_args(opts, argv)
     if parsed is not None:
         return parsed
+
+    if opts.config_show:
+        return print_config_show(opts)
 
     if opts.install_mode:
         install_self(opts)
