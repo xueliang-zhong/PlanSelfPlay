@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# psp-nano — minimal self-play loop; no Python required
+# Usage: echo "GOAL" | psp-nano [-a AGENT] [-g N] [-p PLAN]
+
+set -euo pipefail
+
+AGENT="codex"
+GENERATIONS=10
+PLAN_PATH=""
+GOAL=""
+
+# --- parse args ---
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -a|--agent)       AGENT="$2";       shift 2 ;;
+    -g|--generations) GENERATIONS="$2"; shift 2 ;;
+    -p|--plan)        PLAN_PATH="$2";   shift 2 ;;
+    -h|--help)
+      echo "Usage: echo GOAL | psp-nano [-a codex|claude|opencode] [-g N] [-p PLAN]"
+      exit 0 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+# --- agent preset ---
+case "$AGENT" in
+  codex)    AGENT_CMD="codex --full-auto exec -" ;;
+  claude)   AGENT_CMD="claude -p -" ;;
+  opencode) AGENT_CMD="opencode run -" ;;
+  *)        echo "Unknown agent: $AGENT" >&2; exit 1 ;;
+esac
+
+# --- read goal from stdin ---
+if [[ ! -t 0 ]]; then
+  GOAL=$(cat)
+fi
+
+# --- resolve plan ---
+BUILTIN_PLAN=0
+TMP_PLAN=""
+if [[ -z "$PLAN_PATH" ]]; then
+  BUILTIN_PLAN=1
+  TMP_PLAN=$(mktemp plan.tmp.XXXXXXXX)
+  trap 'rm -f "$TMP_PLAN"' EXIT
+fi
+
+# --- loop ---
+for ((i=1; i<=GENERATIONS; i++)); do
+  echo "PSP $i/$GENERATIONS | running..."
+
+  if [[ "$BUILTIN_PLAN" -eq 1 ]]; then
+    # Use plan.template.txt if present, else inline template
+    if [[ -f plan.template.txt ]]; then
+      sed "s/GOAL:.*/GOAL: $GOAL/" plan.template.txt > "$TMP_PLAN"
+    else
+      cat > "$TMP_PLAN" <<PLAN
+DOMAIN: the current working directory and its contents.
+GOAL: $GOAL
+AUTONOMY: never prompt the user; make every decision yourself.
+LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything.
+STRATEGY: 90% refine the best path, 10% try one mutation.
+SELECTION: git commit if better; git reset otherwise; write agent_<topic>.md to summarise your work.
+CONSTRAINTS: work only inside this repo; never delete $TMP_PLAN.
+PLAN
+    fi
+    $AGENT_CMD < "$TMP_PLAN"
+  else
+    if [[ -n "$GOAL" ]]; then
+      sed "s/GOAL:.*/GOAL: $GOAL/" "$PLAN_PATH" | $AGENT_CMD
+    else
+      $AGENT_CMD < "$PLAN_PATH"
+    fi
+  fi
+
+  echo "PSP $i/$GENERATIONS | done"
+  [[ $i -lt $GENERATIONS ]] && sleep 2
+done
