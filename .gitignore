@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+agent_*.md
+CURRENT_MEMORY.md
+FAILED_PATHS.md
+skill_*.md
+results.tsv
+plan.tmp.*
+psp_*.log

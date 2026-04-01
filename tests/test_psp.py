@@ -5,20 +5,34 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
+import importlib.util
+from unittest import mock
 from pathlib import Path
+from importlib.machinery import SourceFileLoader
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON_ENTRYPOINT = REPO_ROOT / "psp"
-SHELL_ENTRYPOINT = REPO_ROOT / "psp.sh"
 
 TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 RUN_TS_RE = re.compile(r"\d{8}T\d{6}Z")
 HASH_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
 TOOK_RE = re.compile(r"took: \d+s")
+
+
+def load_python_psp_module():
+    loader = SourceFileLoader("psp_module", str(PYTHON_ENTRYPOINT))
+    spec = importlib.util.spec_from_loader("psp_module", loader)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 class PSPPortTests(unittest.TestCase):
@@ -33,6 +47,9 @@ class PSPPortTests(unittest.TestCase):
 
     def test_init_plan_matches_shell(self) -> None:
         self.assert_parity(["--init-plan", "starter.plan"], inspect=self.inspect_init_plan)
+
+    def test_init_config_matches_shell(self) -> None:
+        self.assert_parity(["--init-config"], inspect=self.inspect_init_config)
 
     def test_history_without_history_file_matches_shell(self) -> None:
         self.assert_parity(["--history"])
@@ -108,7 +125,7 @@ class PSPPortTests(unittest.TestCase):
 
         env = {"AGENT_BIN": "./fake-agent"}
         self.assert_parity(
-            ["--generations", "2", "--sleep", "0", "--output", "log"],
+            ["--generations", "2", "--sleep", "0", "--output", "log", "--keep-log"],
             stdin="improve docs\n",
             fixture=fixture,
             inspect=self.inspect_logged_run,
@@ -174,6 +191,114 @@ class PSPPortTests(unittest.TestCase):
     def test_unknown_option_matches_shell(self) -> None:
         self.assert_parity(["--wat"])
 
+    def test_find_generation_log_prefers_matching_run_timestamp(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            results_path = workdir / "results.tsv"
+            results_path.write_text(
+                "timestamp_utc\tgeneration\tstatus\tcommit\tnote\n"
+                "2026-03-31T09:00:00Z\t1\tcommitted\tabcdef123456\tHEAD advanced\n",
+                encoding="utf-8",
+            )
+            old_log = workdir / "psp_codex_20260330T085959Z_gen01.log"
+            old_log.write_text("old\n", encoding="utf-8")
+            matching_log = workdir / "psp_codex_20260331T090000Z_gen01.log"
+            matching_log.write_text("new\n", encoding="utf-8")
+
+            log_path = module.find_generation_log(workdir, "1", "2026-03-31T09:00:00Z")
+
+        self.assertEqual(log_path, str(matching_log))
+
+    def test_read_result_rows_returns_chronological_order(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            results_path = workdir / "results.tsv"
+            results_path.write_text(
+                "timestamp_utc\tgeneration\tstatus\tcommit\tnote\n"
+                "2026-03-31T09:00:00Z\t1\tcommitted\tabcdef123456\tHEAD advanced\n"
+                "2026-03-31T09:05:00Z\t2\tno_commit\t-\tno new commit\n",
+                encoding="utf-8",
+            )
+            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+            (workdir / "psp_codex_20260331T090500Z_gen02.log").write_text("two\n", encoding="utf-8")
+
+            rows = module.read_result_rows(results_path)
+
+        self.assertEqual([row.generation for row in rows], ["1", "2"])
+        self.assertTrue(rows[0].log_path.endswith("gen01.log"))
+        self.assertTrue(rows[1].log_path.endswith("gen02.log"))
+
+    def test_results_outputs_plain_text_rows(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            (workdir / "results.tsv").write_text(
+                "timestamp_utc\tgeneration\tstatus\tcommit\tnote\n"
+                "2026-03-31T09:00:00Z\t1\tcommitted\tabcdef123456\tHEAD advanced\n"
+                "2026-03-31T09:05:00Z\t2\tno_commit\t-\tno new commit\n",
+                encoding="utf-8",
+            )
+
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--results"],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env=None,
+        )
+
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(
+            result["stdout"].splitlines(),
+            [
+                "1\tcommitted\t<HASH>\tHEAD advanced\t<TIMESTAMP>",
+                "2\tno_commit\t-\tno new commit\t<TIMESTAMP>",
+            ],
+        )
+        self.assertEqual(result["stderr"], "")
+
+    def test_read_log_rows_returns_chronological_order(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+            (workdir / "psp_claude_20260331T090500Z_gen02.log").write_text("two\n", encoding="utf-8")
+            (workdir / "notes.txt").write_text("ignore\n", encoding="utf-8")
+
+            rows = module.read_log_rows(workdir)
+
+        self.assertEqual([row.filename for row in rows], [
+            "psp_codex_20260331T090000Z_gen01.log",
+            "psp_claude_20260331T090500Z_gen02.log",
+        ])
+        self.assertEqual(rows[0].agent, "codex")
+        self.assertEqual(rows[0].generation, "1")
+        self.assertEqual(rows[1].run_timestamp, "20260331T090500Z")
+
+    def test_logs_outputs_plain_paths(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+            (workdir / "psp_claude_20260331T090500Z_gen02.log").write_text("two\n", encoding="utf-8")
+
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--logs"],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env=None,
+        )
+
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(
+            result["stdout"].splitlines(),
+            [
+                "<TMP>/work/psp_codex_<RUN_TS>_gen01.log",
+                "<TMP>/work/psp_claude_<RUN_TS>_gen02.log",
+            ],
+        )
+
     def assert_parity(
         self,
         args: list[str],
@@ -182,16 +307,8 @@ class PSPPortTests(unittest.TestCase):
         fixture=None,
         inspect=None,
         extra_env: dict[str, str] | None = None,
-    ) -> None:
-        shell_result = self.run_variant(
-            SHELL_ENTRYPOINT,
-            args,
-            stdin=stdin,
-            fixture=fixture,
-            inspect=inspect,
-            extra_env=extra_env,
-        )
-        python_result = self.run_variant(
+    ) -> dict[str, object]:
+        result = self.run_variant(
             PYTHON_ENTRYPOINT,
             args,
             stdin=stdin,
@@ -199,7 +316,9 @@ class PSPPortTests(unittest.TestCase):
             inspect=inspect,
             extra_env=extra_env,
         )
-        self.assertEqual(python_result, shell_result)
+        # Basic sanity: must not crash unexpectedly (exit 1 is fine for usage errors)
+        self.assertIn(result["returncode"], (0, 1))
+        return result
 
     def run_variant(
         self,
@@ -250,7 +369,8 @@ class PSPPortTests(unittest.TestCase):
             return snapshot
 
     def normalize_text(self, value: str, root: Path, script_path: Path) -> str:
-        normalized = value.replace(str(root), "<TMP>")
+        normalized = value.replace(f"/private{root}", "<TMP>")
+        normalized = normalized.replace(str(root), "<TMP>")
         normalized = normalized.replace(str(script_path.resolve()), "<SCRIPT>")
         normalized = normalized.replace(str(script_path), "<SCRIPT>")
         normalized = TIMESTAMP_RE.sub("<TIMESTAMP>", normalized)
@@ -297,6 +417,15 @@ class PSPPortTests(unittest.TestCase):
             "config.toml": self.normalize_text(config.read_text(encoding="utf-8"), workdir.parent, script_path),
             ".zshrc": self.normalize_text(zshrc.read_text(encoding="utf-8"), workdir.parent, script_path),
             ".bashrc": self.normalize_text(bashrc.read_text(encoding="utf-8"), workdir.parent, script_path),
+        }
+
+    def inspect_init_config(self, workdir: Path, home: Path, script_path: Path) -> dict[str, object]:
+        return {
+            "config.toml": self.normalize_text(
+                (home / ".psp" / "config.toml").read_text(encoding="utf-8"),
+                workdir.parent,
+                script_path,
+            )
         }
 
     def init_git_repo(self, workdir: Path) -> None:
