@@ -45,6 +45,10 @@ echo "reduce lines of code" | psp
 
 # Re-run a past goal
 psp --history | fzf | psp
+psp --fzf
+
+# Inspect generation logs
+psp --logs
 
 # Run your own plan
 psp -p plan.txt
@@ -63,24 +67,31 @@ echo "add type hints" | psp --dry-run
 ```
 Usage: psp [options] [plan-path]
        echo "GOAL" | psp [options]
-
-  -a, --agent codex|claude|opencode   Agent to use (default: codex)
-  -p, --plan PATH                     Plan file to replay
-      --install                       Install psp to ~/.local/bin and wire PATH in ~/.zshrc and ~/.bashrc
-  -g, --generations N                 Generations to run (default: 10)
-  -s, --sleep SECONDS                 Pause between generations (default: 2)
-  -t, --time-budget SECONDS           Wall-clock cap; 0 = no limit
-  -o, --output discard|inherit|log    Agent output handling (default: log = per-generation files)
-  -x, --agent-args STRING             Override full agent argument string
-      --agent-bin PATH                Override agent executable
-      --yolo                          Skip permission prompts (use with care)
-      --init                          Initialise ~/.psp/config.toml and exit
-      --init-plan [PATH]              Write a starter plan file and exit
-      --init-config                   Write ~/.psp/config.toml and exit
-      --dry-run                       Print resolved command and exit
-      --history                       Print past goals and exit
-  -h, --help                          Show help
 ```
+
+| Flag | Description |
+| --- | --- |
+| `-a, --agent codex\|claude\|opencode` | Agent to use (default: codex) |
+| `-p, --plan PATH` | Plan file to replay |
+| `-g, --generations N` | Generations to run (default: 10) |
+| `-s, --sleep SECONDS` | Pause between generations (default: 2) |
+| `-t, --time-budget SECONDS` | Wall-clock cap; 0 = no limit |
+| `-o, --output discard\|inherit\|log` | Agent output handling (default: log) |
+| `-x, --agent-args STRING` | Override full agent argument string |
+| `--agent-bin PATH` | Override agent executable |
+| `--yolo` | Skip permission prompts (use with care) |
+| `--keep-log` | Keep generation log files (default: deleted after run) |
+| `--install` | Install psp to `~/.local/bin` and wire PATH |
+| `--init` | Initialise `~/.psp/config.toml` and exit |
+| `--init-plan [PATH]` | Write a starter plan file and exit |
+| `--init-config` | Write `~/.psp/config.toml` and exit |
+| `--dry-run` | Print resolved command and exit |
+| `--history` | Print past goals and exit |
+| `--fzf` | Browse past goals with metadata preview |
+| `--logs` | Print generation log paths (one per line) |
+| `--results` | Print results.tsv rows |
+| `-V, --version` | Print version and exit |
+| `-h, --help` | Show help |
 
 ### Agent presets
 
@@ -106,7 +117,7 @@ psp --init            # config only
 psp --init-config     # config only
 ```
 
-All keys are optional. Priority: `config.toml` < env vars < CLI flags.
+All keys are optional. Priority: `config.toml` < CLI flags.
 
 ```toml
 # ~/.psp/config.toml
@@ -133,6 +144,36 @@ Browse and re-run:
 ```bash
 psp --history              # list past goals
 psp --history | fzf | psp   # pick one and re-run
+psp --fzf                   # richer picker with agent / generation / cwd preview
+```
+
+`psp --fzf` keeps the same pipe-first behavior underneath, but surfaces the
+saved agent, generation count, working directory, and timestamp in the preview
+pane so long histories stay navigable.
+
+## Results browser
+
+`results.tsv` is the audit ledger. `psp --results` prints generation, status,
+commit, note, and timestamp as plain tab-separated rows, newest-first, so it
+composes cleanly with `cut`, `awk`, `tail`, or your own `fzf` pipeline:
+
+```bash
+psp --results
+```
+
+## Log browser
+
+`psp --logs` prints one absolute log path per line, so it composes cleanly with
+standard tools:
+
+```bash
+psp --logs
+```
+
+To clean up all generation logs from the current run:
+
+```bash
+psp --logs | xargs rm
 ```
 
 ---
