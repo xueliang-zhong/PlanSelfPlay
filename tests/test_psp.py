@@ -385,6 +385,58 @@ class PSPPortTests(unittest.TestCase):
             ],
         )
 
+    def test_goal_flag_sets_goal_without_stdin(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        opts.goal_flag = "fix the tests"
+        # read_goal must use goal_flag when stdin is a tty (no piped input)
+        with mock.patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = True
+            module.read_goal(opts)
+        self.assertEqual(opts.goal_text, "fix the tests")
+
+    def test_goal_flag_loses_to_stdin(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        opts.goal_flag = "from flag"
+        with mock.patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = False
+            mock_stdin.read.return_value = "from stdin\n"
+            module.read_goal(opts)
+        self.assertEqual(opts.goal_text, "from stdin")
+
+    def test_goal_flag_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--goal", "improve coverage", "--dry-run"])
+
+    def test_goal_short_flag_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["-G", "improve coverage", "--dry-run"])
+
+    def test_continue_uses_last_history_goal(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            psp_dir = Path(tmpdir)
+            (psp_dir / "history").write_text(
+                "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\tgoal A\n"
+                "2026-03-31T10:00:00Z\tcodex\t/tmp/repo\tg=2\tgoal B\n",
+                encoding="utf-8",
+            )
+            goals = module.read_history_goals(psp_dir)
+        self.assertEqual(goals[-1], "goal B")
+
+    def test_continue_no_history_exits_with_error(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--continue", "--dry-run"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("No history", result["stderr"])
+
     def assert_parity(
         self,
         args: list[str],

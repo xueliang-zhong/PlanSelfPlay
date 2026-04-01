@@ -124,6 +124,8 @@ class Options:
     logs_mode: int = 0
     results_mode: int = 0
     history_mode: int = 0
+    continue_mode: int = 0
+    goal_flag: str = ""
     keep_logs: str = "session"
     results_path: str = ""
 
@@ -361,8 +363,10 @@ Options:
   --output discard|inherit|log, -o   Agent output handling (default: log = per-generation files)
   --agent-bin PATH                   Agent executable override
   --agent-args STRING, -x            Full agent args override (replaces preset defaults)
+  --goal TEXT, -G                    Set the goal directly (stdin takes priority if piped)
   --dry-run                          Print the resolved command and exit
   --history                          Print ~/.psp/history and exit (pipe through fzf | psp to re-run)
+  --continue, -C                     Re-run the last goal from history (like !! in bash)
   --fzf                              Interactive goal selection with metadata preview
   --logs                             Print generation log paths (one per line)
   --results                          Print results.tsv rows
@@ -486,24 +490,25 @@ def build_history_fzf_command(script_path: Path, extra_args: list[str]) -> str:
     return f"goal=$({psp} --history | fzf) && printf '%s' \"$goal\" | {psp} {extra}"
 
 
-def print_history(psp_dir: Path) -> int:
+def read_history_goals(psp_dir: Path) -> list[str]:
     history_path = psp_dir / "history"
     if not history_path.is_file():
-        print("No history yet.", file=sys.stderr)
-        return 0
-
+        return []
     seen: set[str] = set()
     goals: list[str] = []
     for line in history_path.read_text(encoding="utf-8").splitlines():
-        if "\t" not in line:
-            goal = line
-        else:
-            parts = line.split("\t")
-            goal = parts[4] if len(parts) >= 5 else ""
-        if goal in seen:
-            continue
-        seen.add(goal)
-        goals.append(goal)
+        goal = line if "\t" not in line else (line.split("\t")[4] if len(line.split("\t")) >= 5 else "")
+        if goal and goal not in seen:
+            seen.add(goal)
+            goals.append(goal)
+    return goals
+
+
+def print_history(psp_dir: Path) -> int:
+    goals = read_history_goals(psp_dir)
+    if not goals:
+        print("No history yet.", file=sys.stderr)
+        return 0
     plain = "\n".join(goals) + "\n"
     if sys.stdout.isatty():
         pager = os.environ.get("PAGER", "").strip()
@@ -568,6 +573,11 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             return write_default_config(opts.psp_dir)
         elif current == "--history":
             opts.history_mode = 1
+        elif current in ("--continue", "-C"):
+            opts.continue_mode = 1
+        elif current in ("--goal", "-G"):
+            opts.goal_flag = arg_value(argv, index, current)
+            index += 1
         elif current == "--fzf":
             opts.fzf_mode = 1
         elif current == "--logs":
@@ -649,6 +659,10 @@ def read_goal(opts: Options) -> None:
         return
 
     if opts.goal_text or opts.plan_explicit or opts.init_plan_path:
+        return
+
+    if opts.goal_flag:
+        opts.goal_text = opts.goal_flag
         return
 
     print("Goal: ", end="", file=sys.stderr, flush=True)
@@ -976,6 +990,12 @@ def main(argv: list[str]) -> int:
     if opts.fzf_mode:
         pick_goal_with_fzf(opts.script_path, [a for a in argv if a != "--fzf"])
         return 0
+
+    if opts.continue_mode and not opts.goal_text:
+        goals = read_history_goals(opts.psp_dir)
+        if not goals:
+            quit_with("No history to continue from")
+        opts.goal_text = goals[-1]
 
     read_goal(opts)
 

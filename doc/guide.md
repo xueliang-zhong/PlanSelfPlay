@@ -85,8 +85,10 @@ Usage: psp [options] [plan-path]
 | `--init` | Initialise `~/.psp/config.toml` and exit |
 | `--init-plan [PATH]` | Write a starter plan file and exit |
 | `--init-config` | Write `~/.psp/config.toml` and exit |
+| `-G, --goal TEXT` | Set goal directly (stdin takes priority if piped) |
 | `--dry-run` | Print resolved command and exit |
 | `--history` | Print past goals and exit |
+| `--continue, -C` | Re-run the last goal from history (like `!!` in bash) |
 | `--fzf` | Browse past goals with metadata preview |
 | `--logs` | Print generation log paths (one per line) |
 | `--results` | Print results.tsv rows |
