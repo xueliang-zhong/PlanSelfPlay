@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,31 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
+
+
+VERSION = "0.2.0"
+
+# ── Terminal colours (disabled when stdout is not a tty) ─────────────────────
+def _c(code: str) -> str:
+    return f"\033[{code}m" if sys.stdout.isatty() else ""
+
+RESET  = _c("0")
+BOLD   = _c("1")
+DIM    = _c("2")
+CYAN   = _c("36")
+GREEN  = _c("32")
+YELLOW = _c("33")
+RED    = _c("31")
+PINK   = _c("95")
+SEP    = "|"
+LINE   = "-"
+
+
+def c(text: str, *codes: str) -> str:
+    """Wrap text in ANSI codes (no-op when not a tty)."""
+    if not sys.stdout.isatty():
+        return text
+    return "".join(codes) + text + RESET
 
 
 CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
@@ -26,6 +52,7 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # agent_bin   = ""            # override the agent executable path
 # agent_args  = ""            # override the full agent argument string
 # yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
+# keep_log    = false         # true = keep generation log files (default: deleted after the run completes)
 """
 
 BUILTIN_PLAN_TEMPLATE = """DOMAIN: the current working directory and its contents.
@@ -38,6 +65,8 @@ LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes that seem relevant bef
 
 APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply relevant ones to your approach.
 DEAD ENDS: before designing, read FAILED_PATHS.md if it exists and never re-try any listed approach. When you abandon an approach, append it to FAILED_PATHS.md with a one-line reason.
+
+AUTONOMY: never prompt the user for input or clarification. Make every decision yourself using common sense and the best-known method you can find or recall. If a choice is ambiguous, pick the most widely accepted approach and proceed.
 
 STRATEGY: use a 90%/10% probability split between refining the strongest current path and testing one mutation that could outperform it.
 
@@ -57,7 +86,7 @@ SELECTION:
 - if the result is clearly better, create a local git commit whose message says what changed and what improved
 - otherwise, `git reset` the repo to its pre-task state
 
-CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; treat protected control files (such as PLAN files) as fixed unless the goal explicitly puts them in scope.
+CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; never delete or modify `{plan_file}` — it is the runner's active control file for this session.
 """
 
 HISTORY_INPUT_RE = re.compile(
@@ -68,6 +97,7 @@ CONFIG_LINE_RE = re.compile(
     r"^[ \t]*([a-zA-Z_][a-zA-Z0-9_-]*)[ \t]*=[ \t]*(.*)[ \t]*$"
 )
 SLEEP_RE = re.compile(r"^([0-9]+([.][0-9]+)?|[.][0-9]+)$")
+
 @dataclass
 class Options:
     script_path: Path
@@ -87,6 +117,11 @@ class Options:
     plan_seen: int = 0
     init_plan_path: str = ""
     yolo_mode: int = 0
+    fzf_mode: int = 0
+    logs_mode: int = 0
+    results_mode: int = 0
+    history_mode: int = 0
+    keep_log: int = 0
     results_path: str = ""
 
     def __post_init__(self) -> None:
@@ -108,8 +143,8 @@ def resolve_path(path: Path) -> Path:
     return path.resolve()
 
 
-def builtin_plan_template(goal: str) -> str:
-    return BUILTIN_PLAN_TEMPLATE.format(goal=goal)
+def builtin_plan_template(goal: str, plan_file: str = "") -> str:
+    return BUILTIN_PLAN_TEMPLATE.format(goal=goal, plan_file=plan_file or "plan.tmp.*")
 
 
 def ensure_results_ledger(results_path: str) -> None:
@@ -166,6 +201,8 @@ def load_config(opts: Options) -> None:
             opts.agent_args_text = value
         elif key == "yolo" and value == "true":
             opts.yolo_mode = 1
+        elif key == "keep_log" and value == "true":
+            opts.keep_log = 1
 
 
 def write_default_config(psp_dir: Path) -> int:
@@ -241,10 +278,30 @@ def install_symlink(script_path: Path) -> None:
     print(f"Installed launcher: {link_path} -> {script_path}")
 
 
+def install_nano(script_dir: Path) -> None:
+    nano_src = script_dir / "psp-nano"
+    if not nano_src.is_file():
+        print(f"psp-nano not found in {script_dir}, skipping")
+        return
+    bin_dir = Path.home() / ".local" / "bin"
+    link_path = bin_dir / "psp-nano"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    if link_path.is_symlink():
+        if resolve_path(link_path) == resolve_path(nano_src):
+            print(f"Launcher already installed: {link_path} -> {nano_src}")
+            return
+        quit_with(f"Refusing to overwrite existing symlink: {link_path}")
+    if link_path.exists():
+        quit_with(f"Refusing to overwrite existing file: {link_path}")
+    link_path.symlink_to(nano_src)
+    print(f"Installed launcher: {link_path} -> {nano_src}")
+
+
 def install_self(opts: Options) -> None:
     print(f"Installing PSP from {opts.script_dir}")
     init_all(opts.psp_dir)
     install_symlink(opts.script_path)
+    install_nano(opts.script_dir)
     ensure_path_block(Path.home() / ".zshrc")
     ensure_path_block(Path.home() / ".bashrc")
     print("Install complete. Open a new shell, then run: psp --help")
@@ -276,6 +333,7 @@ Options:
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.template.txt)
   --init-config                      Write a starter ~/.psp/config.toml and exit
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
+  --keep-log                         Keep generation log files (default: deleted after the run completes)
   --generations N, -g                Positive integer (default: 10)
   --sleep SECONDS, -s                Non-negative delay between generations
   --time-budget SECONDS, -t          Stop after this many wall-clock seconds (0 = no limit)
@@ -284,6 +342,10 @@ Options:
   --agent-args STRING, -x            Full agent args override (replaces preset defaults)
   --dry-run                          Print the resolved command and exit
   --history                          Print ~/.psp/history and exit (pipe through fzf | psp to re-run)
+  --fzf                              Interactive goal selection with metadata preview
+  --logs                             Print generation log paths (one per line)
+  --results                          Print results.tsv rows
+   -V, --version                     Print version and exit
   -h, --help                         Show this help text
 
 Agent presets (overridable via --agent-args):
@@ -311,6 +373,98 @@ def set_plan(opts: Options, path: str) -> None:
     opts.plan_path = path
 
 
+@dataclass(frozen=True)
+class ResultRow:
+    generation: str
+    status: str
+    commit: str
+    note: str
+    timestamp: str
+    log_path: str = ""
+
+
+@dataclass(frozen=True)
+class LogRow:
+    path: str
+    filename: str
+    agent: str
+    run_timestamp: str
+    generation: str
+
+
+def find_generation_log(results_dir: Path, generation: str, timestamp: str) -> str:
+    target_suffix = timestamp.replace("-", "").replace(":", "")
+    preferred: list[Path] = []
+    fallback: list[Path] = []
+    for path in sorted(results_dir.glob(f"psp_*_gen{int(generation):02d}.log")):
+        fallback.append(path)
+        if target_suffix and target_suffix in path.name:
+            preferred.append(path)
+    chosen = preferred[-1] if preferred else (fallback[-1] if fallback else None)
+    return str(chosen) if chosen is not None else ""
+
+
+def read_result_rows(results_path: Path) -> list[ResultRow]:
+    if not results_path.is_file():
+        return []
+
+    lines = results_path.read_text(encoding="utf-8").splitlines()
+    if len(lines) <= 1:
+        return []
+
+    rows: list[ResultRow] = []
+    for line in lines[1:]:
+        parts = line.split("\t")
+        if len(parts) < 5:
+            continue
+        rows.append(
+            ResultRow(
+                generation=parts[1],
+                status=parts[2],
+                commit=parts[3],
+                note=parts[4],
+                timestamp=parts[0],
+                log_path=find_generation_log(results_path.parent, parts[1], parts[0]),
+            )
+        )
+    return rows
+
+
+def read_log_rows(workdir: Path) -> list[LogRow]:
+    rows: list[LogRow] = []
+    for path in sorted(workdir.glob("psp_*_gen*.log")):
+        match = re.match(r"^psp_(.+)_([0-9]{8}T[0-9]{6}Z)_gen([0-9]+)\.log$", path.name)
+        if match is None:
+            continue
+        agent, run_timestamp, generation = match.groups()
+        rows.append(
+            LogRow(
+                path=str(path),
+                filename=path.name,
+                agent=agent,
+                run_timestamp=run_timestamp,
+                generation=str(int(generation)),
+            )
+        )
+    rows.sort(key=lambda row: (row.run_timestamp, int(row.generation), row.filename))
+    return rows
+
+
+
+def pick_goal_with_fzf(script_path: Path, extra_args: list[str]) -> None:
+    if shutil.which("fzf") is None:
+        quit_with("fzf not found on PATH")
+    psp = shlex.quote(str(script_path))
+    extra = " ".join(shlex.quote(a) for a in extra_args)
+    os.execvp("sh", ["sh", "-c", f"goal=$({psp} --history | fzf) && printf '%s' \"$goal\" | {psp} {extra}"])
+
+
+def build_history_fzf_command(script_path: Path, extra_args: list[str]) -> str:
+    psp = shlex.quote(str(script_path))
+    extra = " ".join(shlex.quote(a) for a in extra_args)
+    return f"goal=$({psp} --history | fzf) && printf '%s' \"$goal\" | {psp} {extra}"
+
+
 def print_history(psp_dir: Path) -> int:
     history_path = psp_dir / "history"
     if not history_path.is_file():
@@ -331,6 +485,34 @@ def print_history(psp_dir: Path) -> int:
     return 0
 
 
+def print_results(psp_dir: Path) -> int:
+    results_path = Path("results.tsv")
+    rows = read_result_rows(results_path)
+    if not results_path.is_file():
+        print("No results.tsv found in current directory.", file=sys.stderr)
+        return 0
+
+    if not rows:
+        print("No results yet.", file=sys.stderr)
+        return 0
+
+    for row in rows:
+        short_commit = row.commit[:7] if row.commit and row.commit != "-" else "-"
+        print(f"{row.generation}\t{row.status}\t{short_commit}\t{row.note}\t{row.timestamp}")
+    return 0
+
+
+def print_logs(workdir: Path) -> int:
+    rows = read_log_rows(workdir)
+    if not rows:
+        print("No generation logs found in current directory.", file=sys.stderr)
+        return 0
+
+    for row in rows:
+        print(row.path)
+    return 0
+
+
 def parse_args(opts: Options, argv: list[str]) -> int | None:
     index = 0
     prog = Path(sys.argv[0]).name
@@ -338,6 +520,9 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
         current = argv[index]
         if current in ("-h", "--help"):
             usage(prog)
+            return 0
+        if current in ("-V", "--version"):
+            print(f"psp {VERSION}")
             return 0
         if current == "--install":
             opts.install_mode = 1
@@ -347,7 +532,13 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
         elif current == "--init-config":
             return write_default_config(opts.psp_dir)
         elif current == "--history":
-            return print_history(opts.psp_dir)
+            opts.history_mode = 1
+        elif current == "--fzf":
+            opts.fzf_mode = 1
+        elif current == "--logs":
+            opts.logs_mode = 1
+        elif current == "--results":
+            opts.results_mode = 1
         elif current == "--dry-run":
             opts.dry_run = 1
         elif current in ("-a", "--agent"):
@@ -364,6 +555,8 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
                 opts.init_plan_path = "plan.template.txt"
         elif current == "--yolo":
             opts.yolo_mode = 1
+        elif current == "--keep-log":
+            opts.keep_log = 1
         elif current in ("-g", "--generations"):
             opts.generations = arg_value(argv, index, current)
             index += 1
@@ -395,6 +588,12 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
         else:
             set_plan(opts, current)
         index += 1
+    if opts.history_mode:
+        return print_history(opts.psp_dir)
+    if opts.logs_mode:
+        return print_logs(Path.cwd())
+    if opts.results_mode:
+        return print_results(opts.psp_dir)
     return None
 
 
@@ -412,8 +611,12 @@ def read_goal(opts: Options) -> None:
         return
 
     print("Goal: ", end="", file=sys.stderr, flush=True)
-    with open("/dev/tty", "r", encoding="utf-8") as tty:
-        goal = tty.readline().rstrip("\n")
+    try:
+        with open("/dev/tty", "r", encoding="utf-8") as tty:
+            goal = tty.readline().rstrip("\n")
+    except KeyboardInterrupt:
+        print(file=sys.stderr)
+        raise SystemExit(130)
     if not goal:
         quit_with("No goal provided")
     opts.goal_text = goal
@@ -475,15 +678,7 @@ def split_agent_args(agent_args_text: str) -> list[str]:
 
 
 def bash_quote(value: str) -> str:
-    completed = subprocess.run(
-        ["bash", "-lc", "printf '%q' \"$1\"", "bash", value],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        quit_with("Failed to render Bash-compatible dry-run output")
-    return completed.stdout
+    return shlex.quote(value)
 
 
 def rewrite_plan_goal(plan_path: Path, goal: str) -> str:
@@ -515,7 +710,7 @@ def prepare_effective_plan(opts: Options) -> tuple[str, str]:
     if opts.goal_text and not opts.plan_explicit:
         handle, tmp_plan = tempfile.mkstemp(prefix="plan.tmp.", dir=cwd)
         os.close(handle)
-        Path(tmp_plan).write_text(builtin_plan_template(opts.goal_text), encoding="utf-8")
+        Path(tmp_plan).write_text(builtin_plan_template(opts.goal_text, os.path.basename(tmp_plan)), encoding="utf-8")
         effective_plan = tmp_plan
     elif opts.goal_text:
         base_name = Path(opts.plan_path).name
@@ -541,11 +736,15 @@ def run_generation_loop(
     agent_command: list[str],
     effective_plan: str,
     plan_display: str,
+    header_width: int = 0,
 ) -> int:
     opts.results_path = f"{Path.cwd()}/results.tsv"
     ensure_results_ledger(opts.results_path)
 
     run_ts = ""
+    gen_log_paths: list[str] = []
+    run_committed: list[str] = []
+    run_total = 0
     if opts.output_mode == "log":
         run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -558,56 +757,151 @@ def run_generation_loop(
 
     for generation in range(1, generations + 1):
         if time_budget > 0 and int(time.monotonic() - psp_start_time) >= time_budget:
-            print(
-                f"PSP | time budget of {time_budget}s reached before generation {generation}/{generations}, stopping"
-            )
+            print(f"{c('PSP', CYAN, BOLD)} {SEP} {c('⏱ time budget reached, stopping', YELLOW)}")
             return 0
 
         gen_output_path = None
         gen_log_note = ""
         if opts.output_mode == "log":
             gen_output_path = f"{Path.cwd()}/psp_{opts.agent}_{run_ts}_gen{generation:02d}.log"
-            gen_log_note = f" → {Path(gen_output_path).name}"
+            gen_log_note = f" → {c(Path(gen_output_path).name, DIM)}"
+            gen_log_paths.append(gen_output_path)
+
+        def gen_label() -> str:
+            return c(f"{SEP} PSP {generation:>{gen_w}}/{generations:<{gen_w}} {SEP}", CYAN)
 
         generation_start = git_head()
-        print(f"| PSP {generation:>{gen_w}}/{generations:<{gen_w}} | running...{gen_log_note} |")
+        print(f"{gen_label()} {c('◌ running …', YELLOW)}{gen_log_note}")
         gen_started_at = time.monotonic()
 
         with open(effective_plan, "r", encoding="utf-8") as stdin_handle:
             output_handle = open_output_target(opts.output_mode, gen_output_path)
             try:
-                completed = subprocess.run(
+                proc = subprocess.Popen(
                     agent_command,
                     stdin=stdin_handle,
                     stdout=output_handle if output_handle is not None else sys.stdout,
                     stderr=subprocess.STDOUT,
                     text=True,
-                    check=False,
                 )
+                try:
+                    proc.wait()
+                except KeyboardInterrupt:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    print(f"\n{gen_label()} {c('✗ interrupted', RED)}", flush=True)
+                    return 130
             finally:
                 if output_handle is not None:
                     output_handle.close()
 
-        if completed.returncode != 0:
-            return completed.returncode
+        if proc.returncode != 0:
+            return proc.returncode
 
         took = int(time.monotonic() - gen_started_at)
         generation_end = git_head()
+        run_total += 1
         if generation_end == generation_start:
             append_result(opts.results_path, generation, "no_commit", "-", "no new commit")
-            print(
-                f"| PSP {generation:>{gen_w}}/{generations:<{gen_w}} | running → no commit | took: {took}s |"
-            )
+            print(f"{gen_label()} {c('○ no commit', YELLOW)} {SEP} {c(f'took: {took}s', DIM)}")
         else:
+            run_committed.append(generation_end[:7])
             append_result(opts.results_path, generation, "committed", generation_end, "HEAD advanced")
             print(
-                f"| PSP {generation:>{gen_w}}/{generations:<{gen_w}} | running → committed {generation_end[:7]} | took: {took}s |"
+                f"{gen_label()} {c('✓ committed', GREEN)} {c(generation_end[:7], GREEN)} {SEP} {c(f'took: {took}s', DIM)}"
             )
 
         if generation < generations:
-            time.sleep(sleep_seconds)
+            print(SEP + LINE * (header_width - 2) + SEP)
+            try:
+                time.sleep(sleep_seconds)
+            except KeyboardInterrupt:
+                print(f"\n{gen_label()} {c('✗ interrupted', RED)}", flush=True)
+                return 130
+
+    print(SEP + LINE * (header_width - 2) + SEP)
+    summary = _run_summary(opts.goal_text, gen_log_paths, run_committed, run_total)
+    print(f"{c(f'{SEP} PSP DONE', CYAN)} {SEP} {summary}")
+
+    if not opts.keep_log:
+        for path in gen_log_paths:
+            Path(path).unlink(missing_ok=True)
 
     return 1
+
+
+_SIGNAL_RE = re.compile(
+    r"\b(commit|improve|fix|add|remov|refactor|fail|error|skip|revert|decision|reason|because)\b",
+    re.IGNORECASE,
+)
+
+
+def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], run_total: int) -> str:
+    """Return a one-line display summary. If CURRENT_MEMORY.md is absent,
+    synthesise it from goal + filtered log lines + results, then write it."""
+    memory = Path("CURRENT_MEMORY.md")
+
+    # Synthesise CURRENT_MEMORY.md if absent
+    if not memory.exists():
+        sections: list[str] = []
+        if goal:
+            sections.append(f"## Goal\n{goal}")
+        for path in gen_log_paths:
+            p = Path(path)
+            if not p.exists():
+                continue
+            signal_lines = [
+                line for line in p.read_text(encoding="utf-8", errors="replace").splitlines()
+                if _SIGNAL_RE.search(line)
+            ][:50]
+            if signal_lines:
+                sections.append(f"## {p.name}\n" + "\n".join(signal_lines))
+        if run_total > 0:
+            result_section = (
+                f"{len(run_committed)}/{run_total} generations committed"
+                if run_committed
+                else f"{run_total} generations ran, no commits"
+            )
+            sections.append(f"## Results\n{result_section}")
+        if sections:
+            memory.write_text(
+                "# PSP run memory (auto-generated)\n\n" + "\n\n".join(sections) + "\n",
+                encoding="utf-8",
+            )
+
+    # Build display line
+    result_line = ""
+    if run_total > 0:
+        result_line = (
+            f"{len(run_committed)}/{run_total} committed"
+            if run_committed
+            else f"0/{run_total} committed"
+        )
+    result_colour = GREEN if run_committed else YELLOW
+
+    goal_display = ""
+    if goal:
+        short = goal if len(goal) <= 40 else goal[:40] + "…"
+        goal_display = c("goal: ", DIM) + c(short, CYAN)
+
+    if not memory.exists():
+        parts = [c("◎ run complete", DIM)]
+        if goal_display:
+            parts.append(goal_display)
+        if result_line:
+            parts.append(c(result_line, result_colour))
+        return f" {SEP} ".join(parts)
+
+    mem_label = c("◎ CURRENT_MEMORY.md", GREEN) + c(" generated", DIM)
+    parts = [mem_label]
+    if goal_display:
+        parts.append(goal_display)
+    if result_line:
+        parts.append(c(result_line, result_colour))
+    return f" {SEP} ".join(parts)
 
 
 def main(argv: list[str]) -> int:
@@ -621,6 +915,10 @@ def main(argv: list[str]) -> int:
 
     if opts.install_mode:
         install_self(opts)
+        return 0
+
+    if opts.fzf_mode:
+        pick_goal_with_fzf(opts.script_path, [a for a in argv if a != "--fzf"])
         return 0
 
     read_goal(opts)
@@ -642,25 +940,30 @@ def main(argv: list[str]) -> int:
     agent_args = split_agent_args(opts.agent_args_text)
     agent_command = [opts.agent_bin, *agent_args]
 
-    plan_display = opts.plan_path
-    if opts.goal_text and not opts.plan_explicit:
-        plan_display = "(builtin)"
-
     gen_w = len(opts.generations)
-    nm_w = gen_w * 2 + 1
-    yolo_note = " | yolo: yes" if opts.yolo_mode else ""
-    if opts.plan_explicit:
-        print(
-            f"| PSP {'RUN':<{nm_w}} | plan: {plan_display} | agent: {opts.agent} | generations: {opts.generations}{yolo_note} |"
-        )
-    else:
-        print(
-            f"| PSP {'RUN':<{nm_w}} | goal: {opts.goal_text} | agent: {opts.agent} | generations: {opts.generations}{yolo_note} |"
-        )
+    nm_w = max(gen_w * 2 + 1, len("STEP"))
+    yolo_note = (f" {SEP} {c('⚠ yolo', RED, BOLD)}") if opts.yolo_mode else ""
+    goal_note = ""
+    if opts.goal_text:
+        g = opts.goal_text[:33] + (" …" if len(opts.goal_text) > 33 else "")
+        goal_note = f" {SEP} {c('goal:', DIM)} {c(g, CYAN)}"
+
+    header_width = 0
+
+    def print_header(plan_display: str) -> None:
+        nonlocal header_width
+        label = c(f"{SEP} PSP {'STEP':<{nm_w}} {SEP} ", CYAN)
+        body  = f"{c('plan:', DIM)} {plan_display}{goal_note} {SEP} {c('agent:', DIM)} {c(opts.agent, YELLOW)} {SEP} {c('gen:', DIM)} {opts.generations}{yolo_note} "
+        header = f"{label}{body}{SEP}"
+        print(header)
+        header_width = len(re.sub(r"\033\[[0-9;]*m", "", header))
+        print(SEP + LINE * (header_width - 2) + SEP)
 
     if opts.dry_run == 1:
+        plan_display = opts.plan_path if opts.plan_explicit else "(builtin)"
+        print_header(plan_display)
         command_text = "".join(f" {bash_quote(part)}" for part in agent_command)
-        if plan_display == "(builtin)":
+        if not opts.plan_explicit:
             print(f"PSP DRY RUN |{command_text} < <(builtin_plan_template {bash_quote(opts.goal_text)})")
         else:
             print(f"PSP DRY RUN |{command_text} < {bash_quote(opts.plan_path)}")
@@ -673,8 +976,10 @@ def main(argv: list[str]) -> int:
         opts.plan_path = f"{Path.cwd()}/{opts.plan_path}"
 
     effective_plan, tmp_plan = prepare_effective_plan(opts)
+    plan_display = os.path.basename(tmp_plan) if tmp_plan else opts.plan_path
+    print_header(plan_display)
     try:
-        return run_generation_loop(opts, agent_command, effective_plan, plan_display)
+        return run_generation_loop(opts, agent_command, effective_plan, plan_display, header_width)
     finally:
         if tmp_plan:
             Path(tmp_plan).unlink(missing_ok=True)
