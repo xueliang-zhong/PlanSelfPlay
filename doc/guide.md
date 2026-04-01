@@ -80,7 +80,7 @@ Usage: psp [options] [plan-path]
 | `-x, --agent-args STRING` | Override full agent argument string |
 | `--agent-bin PATH` | Override agent executable |
 | `--yolo` | Skip permission prompts (use with care) |
-| `--keep-log` | Keep generation log files (default: deleted after run) |
+| `--keep-logs always\|session\|never` | Log retention: always=keep forever, session=delete on exit (default), never=delete after each generation |
 | `--install` | Install psp to `~/.local/bin` and wire PATH |
 | `--init` | Initialise `~/.psp/config.toml` and exit |
 | `--init-plan [PATH]` | Write a starter plan file and exit |
@@ -129,6 +129,7 @@ generations = 6
 # agent_bin   = ""
 # agent_args  = ""
 # yolo        = false
+# keep_logs   = "session"  # always | session | never
 ```
 
 ## Run history

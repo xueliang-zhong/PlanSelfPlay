@@ -52,7 +52,10 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # agent_bin   = ""            # override the agent executable path
 # agent_args  = ""            # override the full agent argument string
 # yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
-# keep_log    = false         # true = keep generation log files (default: deleted after the run completes)
+# keep_logs   = "session"     # always | session | never
+#                              #   always  — keep logs forever
+#                              #   session — keep during run, delete on exit (default)
+#                              #   never   — delete each log immediately after the generation completes
 """
 
 BUILTIN_PLAN_TEMPLATE = """DOMAIN: the current working directory and its contents.
@@ -121,7 +124,7 @@ class Options:
     logs_mode: int = 0
     results_mode: int = 0
     history_mode: int = 0
-    keep_log: int = 0
+    keep_logs: str = "session"
     results_path: str = ""
 
     def __post_init__(self) -> None:
@@ -201,8 +204,13 @@ def load_config(opts: Options) -> None:
             opts.agent_args_text = value
         elif key == "yolo" and value == "true":
             opts.yolo_mode = 1
-        elif key == "keep_log" and value == "true":
-            opts.keep_log = 1
+        elif key in ("keep_logs", "keep_log"):
+            if value in ("always", "session", "never"):
+                opts.keep_logs = value
+            elif value == "true":
+                opts.keep_logs = "always"
+            elif value == "false":
+                opts.keep_logs = "session"
 
 
 def write_default_config(psp_dir: Path) -> int:
@@ -346,7 +354,7 @@ Options:
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.template.txt)
   --init-config                      Write a starter ~/.psp/config.toml and exit
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
-  --keep-log                         Keep generation log files (default: deleted after the run completes)
+  --keep-logs always|session|never   Log retention: always=keep forever, session=delete on exit (default), never=delete after each generation
   --generations N, -g                Positive integer (default: 10)
   --sleep SECONDS, -s                Non-negative delay between generations
   --time-budget SECONDS, -t          Stop after this many wall-clock seconds (0 = no limit)
@@ -582,8 +590,14 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
                 opts.init_plan_path = "plan.template.txt"
         elif current == "--yolo":
             opts.yolo_mode = 1
+        elif current == "--keep-logs":
+            val = arg_value(argv, index, current)
+            if val not in ("always", "session", "never"):
+                quit_with(f"--keep-logs must be always, session, or never (got: {val!r})")
+            opts.keep_logs = val
+            index += 1
         elif current == "--keep-log":
-            opts.keep_log = 1
+            opts.keep_logs = "always"
         elif current in ("-g", "--generations"):
             opts.generations = arg_value(argv, index, current)
             index += 1
@@ -840,6 +854,9 @@ def run_generation_loop(
         if proc.returncode != 0:
             return proc.returncode
 
+        if opts.keep_logs == "never" and gen_output_path:
+            Path(gen_output_path).unlink(missing_ok=True)
+
         took = int(time.monotonic() - gen_started_at)
         generation_end = git_head()
         run_total += 1
@@ -865,7 +882,7 @@ def run_generation_loop(
     summary = _run_summary(opts.goal_text, gen_log_paths, run_committed, run_total)
     print(f"{c(f'{SEP} PSP DONE', CYAN)} {SEP} {summary}")
 
-    if not opts.keep_log:
+    if opts.keep_logs == "session":
         for path in gen_log_paths:
             Path(path).unlink(missing_ok=True)
 

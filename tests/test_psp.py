@@ -183,7 +183,7 @@ class PSPPortTests(unittest.TestCase):
 
         env = {"AGENT_BIN": "./fake-agent"}
         self.assert_parity(
-            ["--generations", "2", "--sleep", "0", "--output", "log", "--keep-log"],
+            ["--generations", "2", "--sleep", "0", "--output", "log", "--keep-logs", "always"],
             stdin="improve docs\n",
             fixture=fixture,
             inspect=self.inspect_logged_run,
