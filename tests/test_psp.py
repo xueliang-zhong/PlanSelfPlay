@@ -90,6 +90,64 @@ class PSPPortTests(unittest.TestCase):
 
         self.assert_parity(["--history"], fixture=fixture)
 
+    def test_history_pipes_spaced_output_to_pager_on_tty(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            psp_dir = Path(tmpdir)
+            (psp_dir / "history").write_text(
+                "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\tgoal A\n"
+                "2026-03-31T09:01:00Z\tcodex\t/tmp/repo\tg=2\tgoal B\n",
+                encoding="utf-8",
+            )
+            with mock.patch("sys.stdout") as mock_stdout, \
+                 mock.patch.dict(module.os.environ, {}, clear=True), \
+                 mock.patch.object(module.shutil, "which", return_value="/usr/bin/less"), \
+                 mock.patch.object(module.subprocess, "run") as run_mock:
+                mock_stdout.isatty.return_value = True
+                exit_code = module.print_history(psp_dir)
+
+        self.assertEqual(exit_code, 0)
+        run_mock.assert_called_once()
+        cmd, = run_mock.call_args.args
+        self.assertEqual(cmd, ["less", "-FRX", "+G"])
+        # spaced: blank line before each goal (equiv to sed "s/^/\n/")
+        self.assertEqual(run_mock.call_args.kwargs["input"], "\ngoal A\n\ngoal B\n\n")
+        mock_stdout.write.assert_not_called()
+
+    def test_history_writes_plain_text_when_piped(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            psp_dir = Path(tmpdir)
+            (psp_dir / "history").write_text(
+                "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\tgoal A\n"
+                "2026-03-31T09:01:00Z\tcodex\t/tmp/repo\tg=2\tgoal B\n",
+                encoding="utf-8",
+            )
+            with mock.patch("sys.stdout") as mock_stdout:
+                mock_stdout.isatty.return_value = False
+                exit_code = module.print_history(psp_dir)
+
+        self.assertEqual(exit_code, 0)
+        mock_stdout.write.assert_called_once_with("goal A\ngoal B\n")
+
+    def test_history_always_appends_plus_G_when_pager_is_less(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            psp_dir = Path(tmpdir)
+            (psp_dir / "history").write_text(
+                "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\tgoal A\n",
+                encoding="utf-8",
+            )
+            with mock.patch("sys.stdout") as mock_stdout, \
+                 mock.patch.dict(module.os.environ, {"PAGER": "less"}, clear=True), \
+                 mock.patch.object(module.shutil, "which", return_value="/usr/bin/less"), \
+                 mock.patch.object(module.subprocess, "run") as run_mock:
+                mock_stdout.isatty.return_value = True
+                module.print_history(psp_dir)
+
+        cmd, = run_mock.call_args.args
+        self.assertIn("+G", cmd)
+
     def test_dry_run_builtin_goal_matches_shell(self) -> None:
         self.assert_parity(["--dry-run"], stdin="reduce lines of code\n")
 
@@ -181,6 +239,34 @@ class PSPPortTests(unittest.TestCase):
             pass
 
         self.assert_parity(["--install"], fixture=fixture, inspect=self.inspect_install)
+
+    def test_version_reports_installed_git_sha_when_metadata_exists(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--version"],
+            stdin=None,
+            fixture=self.fixture_installed_version_metadata,
+            inspect=None,
+            extra_env=None,
+        )
+
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["stdout"].strip(), "psp 0.2.1-dev (<HASH>)")
+        self.assertEqual(result["stderr"], "")
+
+    def test_version_omits_git_sha_without_installed_metadata(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--version"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["stdout"].strip(), "psp 0.2.1-dev")
+        self.assertEqual(result["stderr"], "")
 
     def test_claude_yolo_dry_run_matches_shell(self) -> None:
         self.assert_parity(["--agent", "claude", "--yolo", "--dry-run"], stdin="ship it\n")
@@ -409,11 +495,13 @@ class PSPPortTests(unittest.TestCase):
 
     def inspect_install(self, workdir: Path, home: Path, script_path: Path) -> dict[str, object]:
         link = home / ".local" / "bin" / "psp"
+        version_file = home / ".local" / "bin" / ".psp-version"
         config = home / ".psp" / "config.toml"
         zshrc = home / ".zshrc"
         bashrc = home / ".bashrc"
         return {
             "link_target": self.normalize_text(os.path.realpath(link), workdir.parent, script_path),
+            ".psp-version": self.normalize_text(version_file.read_text(encoding="utf-8"), workdir.parent, script_path),
             "config.toml": self.normalize_text(config.read_text(encoding="utf-8"), workdir.parent, script_path),
             ".zshrc": self.normalize_text(zshrc.read_text(encoding="utf-8"), workdir.parent, script_path),
             ".bashrc": self.normalize_text(bashrc.read_text(encoding="utf-8"), workdir.parent, script_path),
@@ -453,6 +541,11 @@ class PSPPortTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
+
+    def fixture_installed_version_metadata(self, workdir: Path, home: Path) -> None:
+        bin_dir = home / ".local" / "bin"
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        (bin_dir / ".psp-version").write_text("abcdef1\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

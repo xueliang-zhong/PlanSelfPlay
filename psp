@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TextIO
 
 
-VERSION = "0.2.0"
+VERSION = "0.2.1-dev"
 
 # ── Terminal colours (disabled when stdout is not a tty) ─────────────────────
 def _c(code: str) -> str:
@@ -297,11 +297,24 @@ def install_nano(script_dir: Path) -> None:
     print(f"Installed launcher: {link_path} -> {nano_src}")
 
 
+def write_installed_version_file(script_path: Path) -> None:
+    bin_dir = Path.home() / ".local" / "bin"
+    version_path = bin_dir / ".psp-version"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    commit = git_head(script_path.parent)
+    if commit == "nogit":
+        if version_path.exists():
+            version_path.unlink()
+        return
+    version_path.write_text(f"{commit}\n", encoding="utf-8")
+
+
 def install_self(opts: Options) -> None:
     print(f"Installing PSP from {opts.script_dir}")
     init_all(opts.psp_dir)
     install_symlink(opts.script_path)
     install_nano(opts.script_dir)
+    write_installed_version_file(opts.script_path)
     ensure_path_block(Path.home() / ".zshrc")
     ensure_path_block(Path.home() / ".bashrc")
     print("Install complete. Open a new shell, then run: psp --help")
@@ -472,6 +485,7 @@ def print_history(psp_dir: Path) -> int:
         return 0
 
     seen: set[str] = set()
+    goals: list[str] = []
     for line in history_path.read_text(encoding="utf-8").splitlines():
         if "\t" not in line:
             goal = line
@@ -481,7 +495,18 @@ def print_history(psp_dir: Path) -> int:
         if goal in seen:
             continue
         seen.add(goal)
-        print(goal)
+        goals.append(goal)
+    plain = "\n".join(goals) + "\n"
+    if sys.stdout.isatty():
+        pager = os.environ.get("PAGER", "").strip()
+        pager_cmd = shlex.split(pager) if pager else ["less", "-FRX", "+G"]
+        if pager_cmd and pager_cmd[0] == "less" and "+G" not in pager_cmd:
+            pager_cmd.append("+G")
+        if pager_cmd and shutil.which(pager_cmd[0]):
+            spaced = re.sub(r"^", "\n", plain, flags=re.M)
+            subprocess.run(pager_cmd, input=spaced, text=True, check=False)
+            return 0
+    sys.stdout.write(plain)
     return 0
 
 
@@ -522,7 +547,9 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             usage(prog)
             return 0
         if current in ("-V", "--version"):
-            print(f"psp {VERSION}")
+            commit = installed_version_sha(Path(sys.argv[0]))
+            suffix = f" ({commit[:7]})" if commit else ""
+            print(f"psp {VERSION}{suffix}")
             return 0
         if current == "--install":
             opts.install_mode = 1
@@ -691,16 +718,28 @@ def rewrite_plan_goal(plan_path: Path, goal: str) -> str:
     return "".join(rewritten)
 
 
-def git_head() -> str:
+def git_head(cwd: Path | None = None) -> str:
     completed = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         capture_output=True,
         text=True,
         check=False,
+        cwd=str(cwd) if cwd is not None else None,
     )
     if completed.returncode != 0:
         return "nogit"
     return completed.stdout.strip() or "nogit"
+
+
+def installed_version_sha(script_path: Path) -> str:
+    candidates = [
+        Path.home() / ".local" / "bin" / ".psp-version",
+        resolve_path(script_path).parent / ".psp-version",
+    ]
+    for version_path in candidates:
+        if version_path.is_file():
+            return version_path.read_text(encoding="utf-8").strip()
+    return ""
 
 
 def prepare_effective_plan(opts: Options) -> tuple[str, str]:
