@@ -12,7 +12,7 @@ Two flavours:
 ## Install
 
 ```bash
-git clone https://github.com/xueliang-zhong/PlanSelfPlay.git ~/PlanSelfPlay
+git clone --branch v0.2.0 --depth 1 https://github.com/xueliang-zhong/PlanSelfPlay.git ~/PlanSelfPlay
 ~/PlanSelfPlay/psp --install
 ```
 
