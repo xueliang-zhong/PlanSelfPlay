@@ -8,3 +8,4 @@ skill_*.md
 results.tsv
 plan.tmp.*
 psp_*.log
+.psp-version
