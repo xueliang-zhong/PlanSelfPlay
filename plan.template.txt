@@ -1,7 +1,0 @@
-DOMAIN: the current working directory and its contents.
-GOAL: improve code quality.
-AUTONOMY: never prompt the user; make every decision yourself.
-LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes before changing anything.
-STRATEGY: 90% refine the best path, 10% try one mutation.
-SELECTION: git commit if better; git reset otherwise; write agent_<topic>.md to summarise your work.
-CONSTRAINTS: work only inside this repo; never delete this plan file.

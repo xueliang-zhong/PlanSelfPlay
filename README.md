@@ -1,52 +1,46 @@
-# PlanSelfPlay
+# PlanSelfPlay (psp)
 
 PlanSelfPlay (psp) is a simple CLI tool for agent self-improvement loops.
 It runs your agent on a goal across N generations - each run reads notes from the last and refines its approach.
 
 Works with **codex**, **claude**, and **opencode** out of the box.
 
-Two flavours:
-- **`psp`** (full-featured Python CLI)
-- **`psp-nano`** (minimal bash)
-
 ## Install
 
 ```bash
-git clone https://github.com/xueliang-zhong/PlanSelfPlay.git ~/PlanSelfPlay --branch v0.2.0
+git clone https://github.com/xueliang-zhong/PlanSelfPlay.git ~/PlanSelfPlay
 ~/PlanSelfPlay/psp --install
+source <(psp --generate-completion)         # optional: tab completion
 ```
 
-`psp --install` creates `~/.local/bin/psp`, adds a managed PATH block to
-`~/.zshrc` and `~/.bashrc`, and bootstraps `~/.psp/config.toml`. Open a new
-shell and `psp` is ready to use from anywhere.
-
-Requirements: `bash`, at least one of `codex` / `claude` / `opencode` on `PATH`, and `fzf` for `--fzf`.
+Open a new shell and `psp` is ready to use from anywhere.
+Requirements: Python 3, and at least one of `codex` / `claude` / `opencode` on `PATH`.
 
 ## Usage
 
 ```bash
-echo "improve test coverage" | psp         # pipe a goal and run
-psp --history | fzf | psp                  # pick a past goal with fzf and re-run
-psp --fzf                                  # structured history picker with metadata preview
+echo "improve test coverage" | psp          # pipe a goal and run
+psp -G "improve test coverage"              # or use a flag
 
-psp --init-plan plan.txt                   # write a starter plan file
-psp -p plan.txt -g20                       # run a custom plan for 20 generations
+psp --history | fzf | psp                   # pick a past goal and re-run
+psp --fzf                                   # same as above
 
-psp --help                                 # all options
+psp --init-plan plan.txt                    # write a starter plan file
+psp -p plan.txt -g 20                       # run a custom plan for 20 generations
+psp --config-show                           # audit resolved config and sources
+psp --help                                  # all options
 ```
 
-No Python? Use **psp-nano** - a self-contained bash script with the same core loop and no dependencies beyond the agent:
+No Python? **`psp-nano`** is a self-contained bash script with the same core loop:
 
 ```bash
-echo "improve test coverage" | psp-nano    # pipe a goal and run
-psp-nano --help                            # all options
+echo "improve test coverage" | psp-nano     # pipe a goal and run
+psp-nano --help                             # all options
 ```
 
-`psp --install` installs both `psp` and `psp-nano` to `~/.local/bin`.
-
-See **[doc/guide.md](doc/guide.md)** for the full user guide.
-
 ## Core Idea
+
+PSP runs your agent on a goal with a loop over N generations.
 
 ```bash
 GOAL="your optimisation goal"
@@ -57,8 +51,17 @@ for ((i=0; i<$GENERATIONS; i++)); do
 done
 ```
 
-That's it. PSP wraps this loop with a self-improvement [PLAN template](plan.template.txt), goal and history management, and built-in presets for codex, claude, and opencode.
+PSP wraps this loop with following simple self-improvement plan template, goal and history management, and built-in presets for codex, claude, and opencode.
 
+```bash
+DOMAIN: the current working directory and its contents.
+GOAL: # improve code quality.
+AUTONOMY: never prompt the user, make every decision yourself.
+LEARN FROM PREVIOUS RUNS: read any local agent_memory_*.md notes before changing anything.
+STRATEGY: 90% refine the best path, 10% try one mutation.
+SELECTION: git commit if better, git reset otherwise, write agent_memory_<topic>.md to summarise your work.
+CONSTRAINTS: work only inside this repo, never delete this plan file.
+```
 ## Fun Demos
 
 Port psp to C++20:
@@ -86,6 +89,9 @@ echo "Maximise test coverage starting with the most critical code paths." | psp
 echo "Find and fix the top 3 performance bottlenecks; benchmark before and after each change." | psp
 echo "Minimise dead code: unused functions, imports, and unreachable branches." | psp
 ```
+## See Also
+
+**[doc/guide.md](doc/guide.md)** — full option reference and config guide.
 
 ## License
 
