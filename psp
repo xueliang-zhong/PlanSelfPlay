@@ -52,9 +52,9 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # agent_bin   = ""            # override the agent executable path
 # agent_args  = ""            # override the full agent argument string
 # yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
-# keep_logs   = "session"     # always | session | never
-#                              #   always  — keep logs forever
-#                              #   session — keep during run, delete on exit (default)
+# keep_logs   = "always"      # always | session | never
+#                              #   always  — keep logs forever (default)
+#                              #   session — keep during run, delete on exit
 #                              #   never   — delete each log immediately after the generation completes
 """
 
@@ -126,7 +126,7 @@ class Options:
     history_mode: int = 0
     continue_mode: int = 0
     goal_flag: str = ""
-    keep_logs: str = "session"
+    keep_logs: str = "always"
     results_path: str = ""
     config_show: int = 0
     _sources: dict = field(default_factory=dict, repr=False, compare=False)
@@ -371,7 +371,7 @@ Options:
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.template.txt)
   --init-config                      Write a starter ~/.psp/config.toml and exit
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
-  --keep-logs always|session|never   Log retention: always=keep forever, session=delete on exit (default), never=delete after each generation
+  --keep-logs always|session|never   Log retention: always=keep forever (default), session=delete on exit, never=delete after each generation
   --generations N, -g                Positive integer (default: 10)
   --sleep SECONDS, -s                Non-negative delay between generations
   --time-budget SECONDS, -t          Stop after this many wall-clock seconds (0 = no limit)
@@ -769,7 +769,7 @@ _CONFIG_SHOW_KEYS = [
     ("agent_bin",   "agent_bin",       ""),
     ("agent_args",  "agent_args_text", ""),
     ("yolo",        "yolo_mode",       "false"),
-    ("keep_logs",   "keep_logs",       "session"),
+    ("keep_logs",   "keep_logs",       "always"),
 ]
 
 
