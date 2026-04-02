@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# psp-nano — minimal self-play loop; no Python required
+# psp-nano - minimal self-play loop
 # Usage: echo "GOAL" | psp-nano [-a AGENT] [-g N] [-p PLAN]
 
 set -euo pipefail
@@ -30,9 +30,14 @@ case "$AGENT" in
   *)        echo "Unknown agent: $AGENT" >&2; exit 1 ;;
 esac
 
-# --- read goal from stdin ---
+# --- read goal ---
 if [[ ! -t 0 ]]; then
   GOAL=$(cat)
+fi
+if [[ -z "$GOAL" && -z "$PLAN_PATH" ]]; then
+  printf 'Goal: ' >&2
+  read -r GOAL </dev/tty || { echo >&2; exit 130; }
+  [[ -z "$GOAL" ]] && { echo "No goal provided" >&2; exit 1; }
 fi
 
 # --- resolve plan ---
@@ -44,9 +49,12 @@ if [[ -z "$PLAN_PATH" ]]; then
   trap 'rm -f "$TMP_PLAN"' EXIT
 fi
 
+RUN_TS=$(date -u +%Y%m%dT%H%M%SZ)
+
 # --- loop ---
 for ((i=1; i<=GENERATIONS; i++)); do
-  echo "PSP $i/$GENERATIONS | running..."
+  LOG="psp_nano_${RUN_TS}_gen$(printf '%02d' "$i").log"
+  echo "PSP $i/$GENERATIONS | running ... $LOG"
 
   if [[ "$BUILTIN_PLAN" -eq 1 ]]; then
     # Use plan.template.txt if present, else inline template
@@ -63,15 +71,16 @@ SELECTION: git commit if better; git reset otherwise; write agent_<topic>.md to 
 CONSTRAINTS: work only inside this repo; never delete $TMP_PLAN.
 PLAN
     fi
-    $AGENT_CMD < "$TMP_PLAN"
+    $AGENT_CMD < "$TMP_PLAN" >"$LOG" 2>&1
   else
     if [[ -n "$GOAL" ]]; then
-      sed "s/GOAL:.*/GOAL: $GOAL/" "$PLAN_PATH" | $AGENT_CMD
+      sed "s/GOAL:.*/GOAL: $GOAL/" "$PLAN_PATH" | $AGENT_CMD >"$LOG" 2>&1
     else
-      $AGENT_CMD < "$PLAN_PATH"
+      $AGENT_CMD < "$PLAN_PATH" >"$LOG" 2>&1
     fi
   fi
 
   echo "PSP $i/$GENERATIONS | done"
   [[ $i -lt $GENERATIONS ]] && sleep 2
 done
+
