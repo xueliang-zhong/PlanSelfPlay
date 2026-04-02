@@ -54,7 +54,7 @@ RUN_TS=$(date -u +%Y%m%dT%H%M%SZ)
 # --- loop ---
 for ((i=1; i<=GENERATIONS; i++)); do
   LOG="psp_nano_${RUN_TS}_gen$(printf '%02d' "$i").log"
-  echo "PSP $i/$GENERATIONS | running ... $LOG"
+  echo "| 🔄 PSP $i/$GENERATIONS | running ... $LOG"
 
   if [[ "$BUILTIN_PLAN" -eq 1 ]]; then
     # Use plan.template.txt if present, else inline template
@@ -80,7 +80,7 @@ PLAN
     fi
   fi
 
-  echo "PSP $i/$GENERATIONS | done"
+  echo "| ✅ PSP $i/$GENERATIONS | done"
   [[ $i -lt $GENERATIONS ]] && sleep 2
 done
 

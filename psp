@@ -987,11 +987,11 @@ def run_generation_loop(
             gen_log_note = f" → {c(Path(gen_output_path).name, DIM)}"
             gen_log_paths.append(gen_output_path)
 
-        def gen_label() -> str:
-            return c(f"{SEP} PSP {generation:>{gen_w}}/{generations:<{gen_w}} {SEP}", CYAN)
+        def gen_label(icon: str = " ") -> str:
+            return c(f"{SEP} {icon} PSP {generation:>{gen_w}}/{generations:<{gen_w}} {SEP}", CYAN)
 
         generation_start = git_head()
-        print(f"{gen_label()} {c('◌ running …', YELLOW)}{gen_log_note}")
+        print(f"{gen_label('🔄')} {c('running …', YELLOW)}{gen_log_note}")
         gen_started_at = time.monotonic()
 
         with open(effective_plan, "r", encoding="utf-8") as stdin_handle:
@@ -1012,7 +1012,7 @@ def run_generation_loop(
                         proc.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         proc.kill()
-                    print(f"\n{gen_label()} {c('✗ interrupted', RED)}", flush=True)
+                    print(f"\n{gen_label('✗')} {c('interrupted', RED)}", flush=True)
                     return 130
             finally:
                 if output_handle is not None:
@@ -1029,12 +1029,12 @@ def run_generation_loop(
         run_total += 1
         if generation_end == generation_start:
             append_result(opts.results_path, generation, "no_commit", "-", "no new commit")
-            print(f"{gen_label()} {c('○ no commit', YELLOW)} {SEP} {c(f'took: {took}s', DIM)}")
+            print(f"{gen_label('⚪')} {c('no commit', YELLOW)} {SEP} {c(f'took: {took}s', DIM)}")
         else:
             run_committed.append(generation_end[:7])
             append_result(opts.results_path, generation, "committed", generation_end, "HEAD advanced")
             print(
-                f"{gen_label()} {c('✓ committed', GREEN)} {c(generation_end[:7], GREEN)} {SEP} {c(f'took: {took}s', DIM)}"
+                f"{gen_label('✅')} {c('committed', GREEN)} {c(generation_end[:7], GREEN)} {SEP} {c(f'took: {took}s', DIM)}"
             )
 
         if generation < generations:
@@ -1042,7 +1042,7 @@ def run_generation_loop(
             try:
                 time.sleep(sleep_seconds)
             except KeyboardInterrupt:
-                print(f"\n{gen_label()} {c('✗ interrupted', RED)}", flush=True)
+                print(f"\n{gen_label('✗')} {c('interrupted', RED)}", flush=True)
                 return 130
 
     print(SEP + LINE * (header_width - 2) + SEP)
