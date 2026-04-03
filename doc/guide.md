@@ -18,8 +18,16 @@ git clone https://github.com/xueliang-zhong/PlanSelfPlay.git ~/PlanSelfPlay
 ```
 
 `--install` creates `~/.local/bin/psp`, adds a managed PATH block to
-`~/.zshrc` and `~/.bashrc`, and bootstraps `~/.psp/config.toml`. Open a new
-shell and `psp` is ready from anywhere.
+`~/.zshrc` and `~/.bashrc`, and bootstraps `~/.psp/config.toml`.
+
+If `~/.local/bin` is not yet on your PATH, the installer prints a one-liner
+to activate it in the current shell:
+
+```
+Install complete. Activate in your current shell:
+  export PATH="/home/you/.local/bin:$PATH"
+Or open a new terminal — your rc file is already updated.
+```
 
 ---
 
@@ -133,7 +141,7 @@ generations = 6
 # agent_bin   = ""
 # agent_args  = ""
 # yolo        = false
-# keep_logs   = "session"  # always | session | never
+# keep_logs   = "always"   # always | session | never  (always = default)
 ```
 
 ## Run history
@@ -276,11 +284,11 @@ The plan is written to a temp file per run (built-in template) or read directly
 PSP prints two lines per generation — one when starting, one with the outcome:
 
 ```
-PSP Step | plan: (builtin) | goal: reduce lines of code | agent: codex | generations: 9
-PSP 1/9 | running...
-PSP 1/9 | committed abc1234
-PSP 2/9 | running...
-PSP 2/9 | no commit
+| PSP STEP | plan: (builtin) | goal: reduce lines of code | agent: codex | gen: 9 |
+| 🔄 PSP 1/9 | running …
+| ✅ PSP 1/9 | committed abc1234 | took: 12s
+| 🔄 PSP 2/9 | running …
+| ⚪ PSP 2/9 | no commit | took: 8s
 ```
 
 ### `--output` values
@@ -294,8 +302,8 @@ PSP 2/9 | no commit
 With `--output log`, a log file is created for each generation:
 
 ```
-PSP 1/9 | running... → psp_codex_20260331T090000Z_gen01.log
-PSP 1/9 | committed abc1234
+| 🔄 PSP 1/9 | running … → psp_codex_20260331T090000Z_gen01.log
+| ✅ PSP 1/9 | committed abc1234 | took: 12s
 ```
 
 All logs from the same run share a timestamp prefix so they sort together.

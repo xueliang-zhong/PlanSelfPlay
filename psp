@@ -342,7 +342,14 @@ def install_self(opts: Options) -> None:
     write_installed_version_file(opts.script_path)
     ensure_path_block(Path.home() / ".zshrc")
     ensure_path_block(Path.home() / ".bashrc")
-    print("Install complete. Open a new shell, then run: psp --help")
+    bin_dir = str(Path.home() / ".local" / "bin")
+    path_dirs = os.environ.get("PATH", "").split(":")
+    if bin_dir in path_dirs:
+        print("Install complete. Run: psp --help")
+    else:
+        print("Install complete. Activate in your current shell:")
+        print(f'  export PATH="{bin_dir}:$PATH"')
+        print("Or open a new terminal — your rc file is already updated.")
 
 
 def append_history(opts: Options, plan_display: str) -> None:
