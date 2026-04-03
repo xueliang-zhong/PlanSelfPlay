@@ -77,8 +77,6 @@ RETHINK: after the first design, pause and say exactly "Wait, let me rethink, ho
 
 AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
 
-RESULTS LEDGER: the runner maintains results.tsv as a tab-separated run ledger with timestamp, generation, status, commit, and note.
-
 UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
 
 WRITE SKILLS: promote a lesson into skill_<topic>.md only when it is reusable, concrete, and likely to help many future runs. Do not create a skill for a one-off repo quirk, a weak hunch, or a trick that succeeded only once.
@@ -122,12 +120,10 @@ class Options:
     yolo_mode: int = 0
     fzf_mode: int = 0
     logs_mode: int = 0
-    results_mode: int = 0
     history_mode: int = 0
     continue_mode: int = 0
     goal_flag: str = ""
     keep_logs: str = "always"
-    results_path: str = ""
     config_show: int = 0
     _sources: dict = field(default_factory=dict, repr=False, compare=False)
 
@@ -153,22 +149,6 @@ def resolve_path(path: Path) -> Path:
 def builtin_plan_template(goal: str, plan_file: str = "") -> str:
     return BUILTIN_PLAN_TEMPLATE.format(goal=goal, plan_file=plan_file or "plan.tmp.*")
 
-
-def ensure_results_ledger(results_path: str) -> None:
-    if not results_path:
-        return
-    path = Path(results_path)
-    if not path.exists():
-        path.write_text("timestamp_utc\tgeneration\tstatus\tcommit\tnote\n", encoding="utf-8")
-
-
-def append_result(results_path: str, generation: int, status: str, commit: str, note: str) -> None:
-    if not results_path:
-        return
-    ensure_results_ledger(results_path)
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    with Path(results_path).open("a", encoding="utf-8") as handle:
-        handle.write(f"{timestamp}\t{generation}\t{status}\t{commit or '-'}\t{note}\n")
 
 
 def load_config(opts: Options) -> None:
@@ -393,7 +373,6 @@ Options:
   --continue, -C                     Re-run the last goal from history (like !! in bash)
   --fzf                              Interactive goal selection with metadata preview
   --logs                             Print generation log paths (one per line)
-  --results                          Print results.tsv rows
    -V, --version                     Print version and exit
   -h, --help                         Show this help text
 
@@ -427,60 +406,12 @@ def set_plan(opts: Options, path: str) -> None:
 
 
 @dataclass(frozen=True)
-class ResultRow:
-    generation: str
-    status: str
-    commit: str
-    note: str
-    timestamp: str
-    log_path: str = ""
-
-
-@dataclass(frozen=True)
 class LogRow:
     path: str
     filename: str
     agent: str
     run_timestamp: str
     generation: str
-
-
-def find_generation_log(results_dir: Path, generation: str, timestamp: str) -> str:
-    target_suffix = timestamp.replace("-", "").replace(":", "")
-    preferred: list[Path] = []
-    fallback: list[Path] = []
-    for path in sorted(results_dir.glob(f"psp_*_gen{int(generation):02d}.log")):
-        fallback.append(path)
-        if target_suffix and target_suffix in path.name:
-            preferred.append(path)
-    chosen = preferred[-1] if preferred else (fallback[-1] if fallback else None)
-    return str(chosen) if chosen is not None else ""
-
-
-def read_result_rows(results_path: Path) -> list[ResultRow]:
-    if not results_path.is_file():
-        return []
-
-    lines = results_path.read_text(encoding="utf-8").splitlines()
-    if len(lines) <= 1:
-        return []
-
-    rows: list[ResultRow] = []
-    for line in lines[1:]:
-        parts = line.split("\t")
-        if len(parts) < 5:
-            continue
-        rows.append(
-            ResultRow(
-                generation=parts[1],
-                status=parts[2],
-                commit=parts[3],
-                note=parts[4],
-                timestamp=parts[0],
-                log_path=find_generation_log(results_path.parent, parts[1], parts[0]),
-            )
-        )
-    return rows
 
 
 def read_log_rows(workdir: Path) -> list[LogRow]:
@@ -551,23 +482,6 @@ def print_history(psp_dir: Path) -> int:
     return 0
 
 
-def print_results(psp_dir: Path) -> int:
-    results_path = Path("results.tsv")
-    rows = read_result_rows(results_path)
-    if not results_path.is_file():
-        print("No results.tsv found in current directory.", file=sys.stderr)
-        return 0
-
-    if not rows:
-        print("No results yet.", file=sys.stderr)
-        return 0
-
-    for row in rows:
-        short_commit = row.commit[:7] if row.commit and row.commit != "-" else "-"
-        print(f"{row.generation}\t{row.status}\t{short_commit}\t{row.note}\t{row.timestamp}")
-    return 0
-
-
 def print_logs(workdir: Path) -> int:
     rows = read_log_rows(workdir)
     if not rows:
@@ -595,7 +509,7 @@ _psp_completion() {
     local flags="--agent --plan --install --init --init-plan --init-config --yolo \\
         --keep-logs --generations --sleep --time-budget --output --agent-bin --agent-args \\
         --goal --config-show --generate-completion --dry-run --history --continue --fzf \\
-        --logs --results --version --help \\
+        --logs --version --help \\
         -a -p -i -g -s -t -o -x -G -C -V -h"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
@@ -632,7 +546,6 @@ _psp() {
         '(-C --continue)'{-C,--continue}'[re-run last goal]'
         '--fzf[interactive goal selection]'
         '--logs[print log paths]'
-        '--results[print results.tsv rows]'
         '(-V --version)'{-V,--version}'[print version]'
         '(-h --help)'{-h,--help}'[show help]'
         '*:plan file:_files'
@@ -685,8 +598,6 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             opts.fzf_mode = 1
         elif current == "--logs":
             opts.logs_mode = 1
-        elif current == "--results":
-            opts.results_mode = 1
         elif current == "--config-show":
             opts.config_show = 1
         elif current == "--generate-completion":
@@ -761,8 +672,6 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
         return print_history(opts.psp_dir)
     if opts.logs_mode:
         return print_logs(Path.cwd())
-    if opts.results_mode:
-        return print_results(opts.psp_dir)
     return None
 
 
@@ -965,9 +874,6 @@ def run_generation_loop(
     plan_display: str,
     header_width: int = 0,
 ) -> int:
-    opts.results_path = f"{Path.cwd()}/results.tsv"
-    ensure_results_ledger(opts.results_path)
-
     run_ts = ""
     gen_log_paths: list[str] = []
     run_committed: list[str] = []
@@ -1035,11 +941,9 @@ def run_generation_loop(
         generation_end = git_head()
         run_total += 1
         if generation_end == generation_start:
-            append_result(opts.results_path, generation, "no_commit", "-", "no new commit")
             print(f"{gen_label('⚪')} {c('no commit', YELLOW)} {SEP} {c(f'took: {took}s', DIM)}")
         else:
             run_committed.append(generation_end[:7])
-            append_result(opts.results_path, generation, "committed", generation_end, "HEAD advanced")
             print(
                 f"{gen_label('✅')} {c('committed', GREEN)} {c(generation_end[:7], GREEN)} {SEP} {c(f'took: {took}s', DIM)}"
             )

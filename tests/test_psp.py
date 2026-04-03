@@ -230,7 +230,7 @@ class PSPPortTests(unittest.TestCase):
             ["--generations", "2", "--sleep", "0", "--output", "discard"],
             stdin="improve tests\n",
             fixture=fixture,
-            inspect=self.inspect_results_and_history,
+            inspect=self.inspect_history,
             extra_env=env,
         )
 
@@ -276,73 +276,6 @@ class PSPPortTests(unittest.TestCase):
 
     def test_unknown_option_matches_shell(self) -> None:
         self.assert_parity(["--wat"])
-
-    def test_find_generation_log_prefers_matching_run_timestamp(self) -> None:
-        module = load_python_psp_module()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workdir = Path(tmpdir)
-            results_path = workdir / "results.tsv"
-            results_path.write_text(
-                "timestamp_utc\tgeneration\tstatus\tcommit\tnote\n"
-                "2026-03-31T09:00:00Z\t1\tcommitted\tabcdef123456\tHEAD advanced\n",
-                encoding="utf-8",
-            )
-            old_log = workdir / "psp_codex_20260330T085959Z_gen01.log"
-            old_log.write_text("old\n", encoding="utf-8")
-            matching_log = workdir / "psp_codex_20260331T090000Z_gen01.log"
-            matching_log.write_text("new\n", encoding="utf-8")
-
-            log_path = module.find_generation_log(workdir, "1", "2026-03-31T09:00:00Z")
-
-        self.assertEqual(log_path, str(matching_log))
-
-    def test_read_result_rows_returns_chronological_order(self) -> None:
-        module = load_python_psp_module()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            workdir = Path(tmpdir)
-            results_path = workdir / "results.tsv"
-            results_path.write_text(
-                "timestamp_utc\tgeneration\tstatus\tcommit\tnote\n"
-                "2026-03-31T09:00:00Z\t1\tcommitted\tabcdef123456\tHEAD advanced\n"
-                "2026-03-31T09:05:00Z\t2\tno_commit\t-\tno new commit\n",
-                encoding="utf-8",
-            )
-            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
-            (workdir / "psp_codex_20260331T090500Z_gen02.log").write_text("two\n", encoding="utf-8")
-
-            rows = module.read_result_rows(results_path)
-
-        self.assertEqual([row.generation for row in rows], ["1", "2"])
-        self.assertTrue(rows[0].log_path.endswith("gen01.log"))
-        self.assertTrue(rows[1].log_path.endswith("gen02.log"))
-
-    def test_results_outputs_plain_text_rows(self) -> None:
-        def fixture(workdir: Path, home: Path) -> None:
-            (workdir / "results.tsv").write_text(
-                "timestamp_utc\tgeneration\tstatus\tcommit\tnote\n"
-                "2026-03-31T09:00:00Z\t1\tcommitted\tabcdef123456\tHEAD advanced\n"
-                "2026-03-31T09:05:00Z\t2\tno_commit\t-\tno new commit\n",
-                encoding="utf-8",
-            )
-
-        result = self.run_variant(
-            PYTHON_ENTRYPOINT,
-            ["--results"],
-            stdin=None,
-            fixture=fixture,
-            inspect=None,
-            extra_env=None,
-        )
-
-        self.assertEqual(result["returncode"], 0)
-        self.assertEqual(
-            result["stdout"].splitlines(),
-            [
-                "1\tcommitted\t<HASH>\tHEAD advanced\t<TIMESTAMP>",
-                "2\tno_commit\t-\tno new commit\t<TIMESTAMP>",
-            ],
-        )
-        self.assertEqual(result["stderr"], "")
 
     def test_read_log_rows_returns_chronological_order(self) -> None:
         module = load_python_psp_module()
@@ -527,7 +460,7 @@ class PSPPortTests(unittest.TestCase):
         }
 
     def inspect_logged_run(self, workdir: Path, home: Path, script_path: Path) -> dict[str, object]:
-        artifacts = self.inspect_results_and_history(workdir, home, script_path)
+        artifacts = self.inspect_history(workdir, home, script_path)
         log_files = sorted(path.name for path in workdir.glob("psp_*_gen*.log"))
         self.assertEqual(len(log_files), 2)
         artifacts["log_files"] = [self.normalize_text(name, workdir.parent, script_path) for name in log_files]
@@ -537,11 +470,9 @@ class PSPPortTests(unittest.TestCase):
         ]
         return artifacts
 
-    def inspect_results_and_history(self, workdir: Path, home: Path, script_path: Path) -> dict[str, object]:
-        results = (workdir / "results.tsv").read_text(encoding="utf-8")
+    def inspect_history(self, workdir: Path, home: Path, script_path: Path) -> dict[str, object]:
         history = (home / ".psp" / "history").read_text(encoding="utf-8")
         return {
-            "results.tsv": self.normalize_text(results, workdir.parent, script_path),
             "history": self.normalize_text(history, workdir.parent, script_path),
         }
 

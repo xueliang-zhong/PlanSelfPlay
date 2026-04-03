@@ -101,7 +101,6 @@ Usage: psp [options] [plan-path]
 | `--continue, -C` | Re-run the last goal from history (like `!!` in bash) |
 | `--fzf` | Browse past goals with metadata preview |
 | `--logs` | Print generation log paths (one per line) |
-| `--results` | Print results.tsv rows |
 | `-V, --version` | Print version and exit |
 | `-h, --help` | Show help |
 
@@ -164,16 +163,6 @@ psp --fzf                   # richer picker with agent / generation / cwd previe
 saved agent, generation count, working directory, and timestamp in the preview
 pane so long histories stay navigable.
 
-## Results browser
-
-`results.tsv` is the audit ledger. `psp --results` prints generation, status,
-commit, note, and timestamp as plain tab-separated rows, newest-first, so it
-composes cleanly with `cut`, `awk`, `tail`, or your own `fzf` pipeline:
-
-```bash
-psp --results
-```
-
 ## Log browser
 
 `psp --logs` prints one absolute log path per line, so it composes cleanly with
@@ -206,7 +195,6 @@ DEAD ENDS: read FAILED_PATHS.md; never re-try listed approaches.
 STRATEGY: 90% refine the best path / 10% test one mutation.
 RETHINK: after the first design, pause and reconsider.
 AT TASK COMPLETION: write agent_<topic>_memory.md.
-RESULTS LEDGER: the runner maintains results.tsv.
 UPDATE CURRENT MEMORY: merge new lessons into CURRENT_MEMORY.md.
 WRITE SKILLS: promote reusable techniques into skill_<topic>.md.
 SKILL HYGIENE: patch existing skills; create new ones only for new techniques.
@@ -236,7 +224,6 @@ you promote upward when a lesson earns wider reuse.
 | 2 | `CURRENT_MEMORY.md` | When a lesson helps the next few runs | Repo-wide, near-term |
 | 3 | `skill_<topic>.md` | When a technique is reusable across many runs | Broad, durable |
 | 4 | `FAILED_PATHS.md` | When a failure pattern is clear | Repo-wide avoidance |
-| 5 | `results.tsv` | Appended by the runner each generation | Audit trail |
 
 **Rule:** never promote automatically — promotion always requires judgment.
 
@@ -271,8 +258,8 @@ throwaway branch first.
 ```bash
 for generation in 1..N:
     run: agent < plan > output_target
-    if HEAD advanced: record "committed" in results.tsv
-    else:             record "no_commit"
+    if HEAD advanced: print "committed" in terminal output
+    else:             print "no commit"
     sleep between generations
 ```
 
