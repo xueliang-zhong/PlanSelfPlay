@@ -335,6 +335,24 @@ def install_self(opts: Options) -> None:
         print("Install complete. Activate in your current shell:")
         print(f'  export PATH="{bin_dir}:$PATH"')
         print("Or open a new terminal — your rc file is already updated.")
+    warn_if_no_agent()
+
+
+_AGENT_INSTALL_HINTS = [
+    ("opencode", "https://opencode.ai/"),
+    ("codex",    "npm install -g @openai/codex"),
+    ("claude",   "npm install -g @anthropic-ai/claude-code"),
+]
+
+
+def warn_if_no_agent() -> None:
+    missing = [name for name, _ in _AGENT_INSTALL_HINTS if shutil.which(name) is None]
+    if len(missing) < len(_AGENT_INSTALL_HINTS):
+        return  # at least one agent present
+    print("\nNo agent found on PATH. Install one to get started:")
+    for name, hint in _AGENT_INSTALL_HINTS:
+        print(f"  {name:<10}→  {hint}")
+    print()
 
 
 def append_history(opts: Options, plan_display: str) -> None:
@@ -1149,6 +1167,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     if shutil.which(opts.agent_bin) is None:
+        warn_if_no_agent()
         quit_with(f"Required command not found on PATH: {opts.agent_bin}")
 
     if not os.path.isabs(opts.plan_path):
