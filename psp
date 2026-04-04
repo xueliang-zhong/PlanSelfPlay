@@ -53,7 +53,7 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # agent_args  = ""            # override the full agent argument string
 # yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
 # keep_logs   = "always"      # always | session | never
-# tmux        = false         # true = always run in a new tmux split pane
+# tmux        = true          # true = always run in a new tmux split pane (default)
 #                              #   always  — keep logs forever (default)
 #                              #   session — keep during run, delete on exit
 #                              #   never   — delete each log immediately after the generation completes
@@ -120,7 +120,7 @@ class Options:
     init_plan_path: str = ""
     yolo_mode: int = 0
     fzf_mode: int = 0
-    tmux_mode: int = 0
+    tmux_mode: int = 1
     logs_mode: int = 0
     history_mode: int = 0
     continue_mode: int = 0
@@ -200,8 +200,8 @@ def load_config(opts: Options) -> None:
         elif key == "yolo" and value == "true":
             opts.yolo_mode = 1
             opts._sources["yolo"] = label
-        elif key == "tmux" and value == "true":
-            opts.tmux_mode = 1
+        elif key == "tmux":
+            opts.tmux_mode = 1 if value == "true" else 0
             opts._sources["tmux"] = label
         elif key in ("keep_logs", "keep_log"):
             if value in ("always", "session", "never"):
@@ -704,7 +704,7 @@ _CONFIG_SHOW_KEYS = [
     ("agent_bin",   "agent_bin",       ""),
     ("agent_args",  "agent_args_text", ""),
     ("yolo",        "yolo_mode",       "false"),
-    ("tmux",        "tmux_mode",       "false"),
+    ("tmux",        "tmux_mode",       "true"),
     ("keep_logs",   "keep_logs",       "always"),
 ]
 
@@ -1073,12 +1073,18 @@ def launch_tmux(opts: Options, argv: list[str]) -> bool:
 
     # PSP_TMUX_CHILD=1 prevents the child from re-entering tmux mode (config loop)
     psp_cmd = "PSP_TMUX_CHILD=1 " + " ".join([psp] + [shlex.quote(a) for a in clean])
-    # Named trap (not SIG_IGN) so psp inherits default SIGINT and Ctrl-C kills
-    # it normally; the wrapper shell catches INT via the function and keeps
-    # the pane open until the user presses Enter.
+    # Run psp in a subshell with INT reset to default so Ctrl-C kills it.
+    # The outer shell catches INT with a no-op so it survives the Ctrl-C and
+    # reaches the wait loop. After psp exits (normally or via Ctrl-C), the
+    # outer shell resets its trap to exit 0 — now Ctrl-C cleanly closes the pane.
+    # This avoids the POSIX trap-reentry problem where INT is blocked while a
+    # trap handler executes, making subsequent Ctrl-C presses swallowed.
     inner = (
-        f"_psp_done() {{ printf '\\n[psp done — press Enter to close]\\n'; read _psp; }}; "
-        f"trap _psp_done INT; {psp_cmd}; _psp_done"
+        f"trap 'true' INT; "
+        f"(trap - INT; {psp_cmd}); "
+        f"trap 'exit 0' INT; "
+        f"printf '\\n[psp done — press Ctrl-C to close]\\n'; "
+        f"while true; do sleep 3600; done"
     )
     cmd = f"sh -c {shlex.quote(inner)}"
     # -v = vertical split (new pane below); -d = keep focus in current pane

@@ -248,7 +248,7 @@ class PSPPortTests(unittest.TestCase):
         )
 
         self.assertEqual(result["returncode"], 0)
-        self.assertEqual(result["stdout"].strip(), "psp 0.2.1-dev (<HASH>)")
+        self.assertEqual(result["stdout"].strip(), "psp 0.2.2-dev (<HASH>)")
         self.assertEqual(result["stderr"], "")
 
     def test_version_omits_git_sha_without_installed_metadata(self) -> None:
@@ -262,7 +262,7 @@ class PSPPortTests(unittest.TestCase):
         )
 
         self.assertEqual(result["returncode"], 0)
-        self.assertEqual(result["stdout"].strip(), "psp 0.2.1-dev")
+        self.assertEqual(result["stdout"].strip(), "psp 0.2.2-dev")
         self.assertEqual(result["stderr"], "")
 
     def test_claude_yolo_dry_run_matches_shell(self) -> None:
@@ -415,6 +415,7 @@ class PSPPortTests(unittest.TestCase):
             env["HOME"] = str(home)
             env["LC_ALL"] = "C"
             env["PATH"] = f"{workdir}{os.pathsep}{env.get('PATH', '')}"
+            env["PSP_TMUX_CHILD"] = "1"  # disable tmux split during tests
             if extra_env:
                 env.update(extra_env)
 
