@@ -12,32 +12,46 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TextIO
+from typing import NoReturn, TextIO
 
 
-VERSION = "0.2.2-dev"
+VERSION = "0.3.0-dev"
 
-# ── Terminal colours (disabled when stdout is not a tty) ─────────────────────
+# ── Terminal colours (disabled when stdout is not a tty or --no-color) ───────
+_COLOR_ENABLED: bool = True
+_COLOR_CODES = {
+    "0": "0", "1": "1", "2": "2",
+    "36": "36", "32": "32", "33": "33", "31": "31", "95": "95",
+}
+
+def _color(code: str) -> str:
+    """Return ANSI escape for a code, or empty string."""
+    return f"\033[{code}m"
+
 def _c(code: str) -> str:
-    return f"\033[{code}m" if sys.stdout.isatty() else ""
+    """Return ANSI escape if colors are enabled, else empty string."""
+    return _color(code) if _COLOR_ENABLED else ""
 
-RESET  = _c("0")
-BOLD   = _c("1")
-DIM    = _c("2")
-CYAN   = _c("36")
-GREEN  = _c("32")
-YELLOW = _c("33")
-RED    = _c("31")
-PINK   = _c("95")
-SEP    = "|"
-LINE   = "-"
+def _init_colors() -> None:
+    """Initialize color constants after --no-color is known."""
+    global RESET, BOLD, DIM, CYAN, GREEN, YELLOW, RED, PINK, SEP, LINE
+    RESET  = _c("0")
+    BOLD   = _c("1")
+    DIM    = _c("2")
+    CYAN   = _c("36")
+    GREEN  = _c("32")
+    YELLOW = _c("33")
+    RED    = _c("31")
+    PINK   = _c("95")
+    SEP    = "|"
+    LINE   = "-"
 
 
 def c(text: str, *codes: str) -> str:
-    """Wrap text in ANSI codes (no-op when not a tty)."""
-    if not sys.stdout.isatty():
+    """Wrap text in ANSI codes (no-op when colors disabled)."""
+    if not _COLOR_ENABLED:
         return text
-    return "".join(codes) + text + RESET
+    return "".join(_color(code) for code in codes) + _color("0") + text
 
 
 CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
@@ -57,6 +71,12 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 #                              #   always  — keep logs forever (default)
 #                              #   session — keep during run, delete on exit
 #                              #   never   — delete each log immediately after the generation completes
+# quiet       = false         # true = suppress progress output, show only summary
+# stop_on_error = false       # true = abort loop on first agent failure
+# verbose     = false         # true = show detailed timing and debug info
+# no_color    = false         # true = disable ANSI color output
+# no_banner   = false         # true = suppress the header line
+# model       = ""            # LLM model to use (e.g. gpt-4o, claude-sonnet-4-20250514)
 """
 
 BUILTIN_PLAN_TEMPLATE = """DOMAIN: the current working directory and its contents.
@@ -114,19 +134,29 @@ class Options:
     sleep_seconds: str = "2"
     time_budget: str = "0"
     output_mode: str = "log"
-    dry_run: int = 0
-    install_mode: int = 0
-    plan_seen: int = 0
+    dry_run: bool = False
+    install_mode: bool = False
+    plan_seen: bool = False
     init_plan_path: str = ""
-    yolo_mode: int = 0
-    fzf_mode: int = 0
-    tmux_mode: int = 1
-    logs_mode: int = 0
-    history_mode: int = 0
-    continue_mode: int = 0
+    yolo_mode: bool = False
+    fzf_mode: bool = False
+    tmux_mode: bool = True
+    logs_mode: bool = False
+    history_mode: bool = False
+    continue_mode: bool = False
     goal_flag: str = ""
     keep_logs: str = "always"
-    config_show: int = 0
+    config_show: bool = False
+    no_color: bool = False
+    quiet_mode: bool = False
+    stop_on_error: bool = False
+    cwd_override: str = ""
+    verbose_mode: bool = False
+    print_plan: bool = False
+    model: str = ""
+    config_path: str = ""
+    no_banner: bool = False
+    env_vars: list[str] = field(default_factory=list)
     _sources: dict = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -139,7 +169,7 @@ class Options:
         return Path(os.environ.get("PSP_DIR", str(Path.home() / ".psp")))
 
 
-def quit_with(message: str) -> "NoReturn":
+def quit_with(message: str) -> NoReturn:
     print(message, file=sys.stderr)
     raise SystemExit(1)
 
@@ -153,12 +183,10 @@ def builtin_plan_template(goal: str, plan_file: str = "") -> str:
 
 
 
-def load_config(opts: Options) -> None:
-    cfg = opts.psp_dir / "config.toml"
+def _load_config_file(opts: Options, cfg: Path, label: str) -> None:
+    """Load config from a specific file path."""
     if not cfg.is_file():
         return
-
-    label = f"~/.psp/config.toml"
 
     for raw_line in cfg.read_text(encoding="utf-8").splitlines():
         stripped = raw_line.lstrip()
@@ -198,10 +226,10 @@ def load_config(opts: Options) -> None:
             opts.agent_args_text = value
             opts._sources["agent_args"] = label
         elif key == "yolo" and value == "true":
-            opts.yolo_mode = 1
+            opts.yolo_mode = True
             opts._sources["yolo"] = label
         elif key == "tmux":
-            opts.tmux_mode = 1 if value == "true" else 0
+            opts.tmux_mode = value == "true"
             opts._sources["tmux"] = label
         elif key in ("keep_logs", "keep_log"):
             if value in ("always", "session", "never"):
@@ -213,6 +241,30 @@ def load_config(opts: Options) -> None:
             elif value == "false":
                 opts.keep_logs = "session"
                 opts._sources["keep_logs"] = label
+        elif key == "quiet" and value == "true":
+            opts.quiet_mode = True
+            opts._sources["quiet"] = label
+        elif key == "stop_on_error" and value == "true":
+            opts.stop_on_error = True
+            opts._sources["stop_on_error"] = label
+        elif key == "verbose" and value == "true":
+            opts.verbose_mode = True
+            opts._sources["verbose"] = label
+        elif key == "no_color" and value == "true":
+            opts.no_color = True
+            opts._sources["no_color"] = label
+        elif key == "model":
+            opts.model = value
+            opts._sources["model"] = label
+
+
+def load_config(opts: Options) -> None:
+    cfg = opts.psp_dir / "config.toml"
+    if not cfg.is_file():
+        return
+
+    label = f"~/.psp/config.toml"
+    _load_config_file(opts, cfg, label)
 
 
 def write_default_config(psp_dir: Path) -> int:
@@ -388,16 +440,26 @@ Options:
   --agent-bin PATH                   Agent executable override
   --agent-args STRING, -x            Full agent args override (replaces preset defaults)
   --goal TEXT, -G                    Set the goal directly (stdin takes priority if piped)
+  --model MODEL                      LLM model to use (e.g. gpt-4o, claude-sonnet-4-20250514)
+  --config PATH                      Use an alternative config file instead of ~/.psp/config.toml
   --config-show                      Print resolved config with source of each value and exit
   --generate-completion              Print a shell completion script for the current shell (source it with: source <(psp --generate-completion))
   --dry-run                          Print the resolved command and exit
   --history                          Print ~/.psp/history and exit (pipe through fzf | psp to re-run)
   --continue, -C                     Re-run the last goal from history (like !! in bash)
-  --fzf                              Interactive goal selection with metadata preview
-  --tmux                             Run psp in a new tmux split pane (requires tmux session)
-  --logs                             Print generation log paths (one per line)
-   -V, --version                     Print version and exit
-  -h, --help                         Show this help text
+   --fzf                              Interactive goal selection with metadata preview
+   --tmux                             Run psp in a new tmux split pane (requires tmux session)
+   --logs                             Print generation log paths (one per line)
+   --no-color                         Disable ANSI color output
+   --no-banner                        Suppress the header line
+   --quiet, -q                        Suppress progress output, show only summary
+   --stop-on-error                    Abort the loop on first agent failure
+   --cwd PATH                         Run in a different working directory
+   --verbose                          Show detailed timing and debug info
+   --print-plan                       Print the effective plan and exit
+   --env KEY=VALUE                    Pass an environment variable to the agent (repeatable)
+    -V, --version                     Print version and exit
+   -h, --help                         Show this help text
 
 Agent presets (overridable via --agent-args):
   codex     -> codex --full-auto exec -
@@ -423,7 +485,7 @@ def arg_value(argv: list[str], index: int, option: str) -> str:
 def set_plan(opts: Options, path: str) -> None:
     if opts.plan_seen:
         quit_with("Provide the plan path once")
-    opts.plan_seen = 1
+    opts.plan_seen = True
     opts.plan_explicit = True
     opts.plan_path = path
 
@@ -525,15 +587,16 @@ _psp_completion() {
         --agent|-a)       COMPREPLY=($(compgen -W "codex claude opencode" -- "$cur")); return ;;
         --output|-o)      COMPREPLY=($(compgen -W "discard inherit log" -- "$cur")); return ;;
         --keep-logs)      COMPREPLY=($(compgen -W "always session never" -- "$cur")); return ;;
-        --plan|-p|--agent-bin|--goal|-G)
+        --plan|-p|--agent-bin|--goal|-G|--cwd|--config|--model)
                           COMPREPLY=($(compgen -f -- "$cur")); return ;;
-        --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x) return ;;
+        --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x|--env) return ;;
     esac
     local flags="--agent --plan --install --init-plan --yolo \\
         --keep-logs --generations --sleep --time-budget --output --agent-bin --agent-args \\
-        --goal --config-show --generate-completion --dry-run --history --continue --fzf \\
-        --tmux --logs --version --help \\
-        -a -p -i -g -s -t -o -x -G -C -V -h"
+        --goal --model --config --config-show --generate-completion --dry-run --history --continue --fzf \\
+        --tmux --logs --no-color --no-banner --quiet --stop-on-error --cwd --verbose --print-plan --env \\
+        --version --help \\
+        -a -p -i -g -s -t -o -x -G -C -q -V -h"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
     else
@@ -560,6 +623,8 @@ _psp() {
         '--agent-bin[agent executable]:file:_files'
         '(-x --agent-args)'{-x,--agent-args}'[agent args override]:string'
         '(-G --goal)'{-G,--goal}'[set goal directly]:text'
+        '--model[LLM model to use]:model'
+        '--config[alternative config file]:file:_files'
         '--config-show[print resolved config]'
         '--generate-completion[print shell completion script]'
         '--dry-run[print resolved command and exit]'
@@ -568,6 +633,14 @@ _psp() {
         '--fzf[interactive goal selection]'
         '--tmux[run in a new tmux split pane]'
         '--logs[print log paths]'
+        '--no-color[disable ANSI colors]'
+        '--no-banner[suppress the header line]'
+        '(-q --quiet)'{-q,--quiet}'[suppress progress output]'
+        '--stop-on-error[abort loop on first failure]'
+        '--cwd[working directory]:dir:_directories'
+        '--verbose[show detailed timing and debug info]'
+        '--print-plan[print the effective plan and exit]'
+        '--env[pass env var to agent]:KEY=VALUE'
         '(-V --version)'{-V,--version}'[print version]'
         '(-h --help)'{-h,--help}'[show help]'
         '*:plan file:_files'
@@ -603,26 +676,51 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             print(f"psp {VERSION}{suffix}")
             return 0
         if current == "--install":
-            opts.install_mode = 1
+            opts.install_mode = True
         elif current == "--history":
-            opts.history_mode = 1
+            opts.history_mode = True
         elif current in ("--continue", "-C"):
-            opts.continue_mode = 1
+            opts.continue_mode = True
         elif current in ("--goal", "-G"):
             opts.goal_flag = arg_value(argv, index, current)
             index += 1
         elif current == "--fzf":
-            opts.fzf_mode = 1
+            opts.fzf_mode = True
         elif current == "--tmux":
-            opts.tmux_mode = 1
+            opts.tmux_mode = True
         elif current == "--logs":
-            opts.logs_mode = 1
+            opts.logs_mode = True
+        elif current == "--no-color":
+            opts.no_color = True
+        elif current in ("--quiet", "-q"):
+            opts.quiet_mode = True
+        elif current == "--stop-on-error":
+            opts.stop_on_error = True
+        elif current == "--cwd":
+            opts.cwd_override = arg_value(argv, index, current)
+            index += 1
+        elif current == "--verbose":
+            opts.verbose_mode = True
+        elif current == "--print-plan":
+            opts.print_plan = True
         elif current == "--config-show":
-            opts.config_show = 1
+            opts.config_show = True
         elif current == "--generate-completion":
             return generate_completion()
         elif current == "--dry-run":
-            opts.dry_run = 1
+            opts.dry_run = True
+        elif current == "--no-banner":
+            opts.no_banner = True
+        elif current == "--model":
+            opts.model = arg_value(argv, index, current)
+            opts._sources["model"] = current
+            index += 1
+        elif current == "--config":
+            opts.config_path = arg_value(argv, index, current)
+            index += 1
+        elif current == "--env":
+            opts.env_vars.append(arg_value(argv, index, current))
+            index += 1
         elif current in ("-a", "--agent"):
             opts.agent = arg_value(argv, index, current)
             opts._sources["agent"] = current
@@ -637,7 +735,7 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             else:
                 opts.init_plan_path = "plan.template.txt"
         elif current == "--yolo":
-            opts.yolo_mode = 1
+            opts.yolo_mode = True
             opts._sources["yolo"] = current
         elif current == "--keep-logs":
             val = arg_value(argv, index, current)
@@ -696,16 +794,22 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
 
 # Keys shown by --config-show, in display order
 _CONFIG_SHOW_KEYS = [
-    ("agent",       "agent",           "codex"),
-    ("generations", "generations",     "10"),
-    ("sleep",       "sleep_seconds",   "2"),
-    ("time_budget", "time_budget",     "0"),
-    ("output",      "output_mode",     "log"),
-    ("agent_bin",   "agent_bin",       ""),
-    ("agent_args",  "agent_args_text", ""),
-    ("yolo",        "yolo_mode",       "false"),
-    ("tmux",        "tmux_mode",       "true"),
-    ("keep_logs",   "keep_logs",       "always"),
+    ("agent",        "agent",           "codex"),
+    ("generations",  "generations",     "10"),
+    ("sleep",        "sleep_seconds",   "2"),
+    ("time_budget",  "time_budget",     "0"),
+    ("output",       "output_mode",     "log"),
+    ("agent_bin",    "agent_bin",       ""),
+    ("agent_args",   "agent_args_text", ""),
+    ("yolo",         "yolo_mode",       "false"),
+    ("tmux",         "tmux_mode",       "true"),
+    ("keep_logs",    "keep_logs",       "always"),
+    ("quiet",        "quiet_mode",      "false"),
+    ("stop_on_error", "stop_on_error",  "false"),
+    ("verbose",      "verbose_mode",    "false"),
+    ("no_color",     "no_color",        "false"),
+    ("no_banner",    "no_banner",       "false"),
+    ("model",        "model",           ""),
 ]
 
 
@@ -716,7 +820,7 @@ def print_config_show(opts: Options) -> int:
     key_width = max(len(k) for k, _, _ in _CONFIG_SHOW_KEYS)
     for cfg_key, attr, default in _CONFIG_SHOW_KEYS:
         raw = getattr(opts, attr)
-        if attr == "yolo_mode":
+        if isinstance(raw, bool):
             value = "true" if raw else "false"
         else:
             value = str(raw) if raw else default
@@ -910,7 +1014,8 @@ def run_generation_loop(
 
     for generation in range(1, generations + 1):
         if time_budget > 0 and int(time.monotonic() - psp_start_time) >= time_budget:
-            print(f"{c('PSP', CYAN, BOLD)} {SEP} {c('⏱ time budget reached, stopping', YELLOW)}")
+            if not opts.quiet_mode:
+                print(f"{c('PSP', CYAN, BOLD)} {SEP} {c('⏱ time budget reached, stopping', YELLOW)}")
             return 0
 
         gen_output_path = None
@@ -924,7 +1029,8 @@ def run_generation_loop(
             return c(f"{SEP} {icon} PSP {generation:>{gen_w}}/{generations:<{gen_w}} {SEP}", CYAN)
 
         generation_start = git_head()
-        print(f"{gen_label('🔄')} {c('running …', YELLOW)}{gen_log_note}")
+        if not opts.quiet_mode:
+            print(f"{gen_label('🔄')} {c('running …', YELLOW)}{gen_log_note}")
         gen_started_at = time.monotonic()
 
         with open(effective_plan, "r", encoding="utf-8") as stdin_handle:
@@ -945,14 +1051,20 @@ def run_generation_loop(
                         proc.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         proc.kill()
-                    print(f"\n{gen_label('✗')} {c('interrupted', RED)}", flush=True)
+                    if not opts.quiet_mode:
+                        print(f"\n{gen_label('✗')} {c('interrupted', RED)}", flush=True)
                     return 130
             finally:
                 if output_handle is not None:
                     output_handle.close()
 
         if proc.returncode != 0:
-            return proc.returncode
+            if opts.stop_on_error:
+                if not opts.quiet_mode:
+                    print(f"{gen_label('✗')} {c(f'agent failed (exit {proc.returncode}), stopping', RED)}")
+                return proc.returncode
+            if not opts.quiet_mode:
+                print(f"{gen_label('✗')} {c(f'agent failed (exit {proc.returncode}), continuing', RED)}")
 
         if opts.keep_logs == "never" and gen_output_path:
             Path(gen_output_path).unlink(missing_ok=True)
@@ -961,30 +1073,59 @@ def run_generation_loop(
         generation_end = git_head()
         run_total += 1
         if generation_end == generation_start:
-            print(f"{gen_label('⚪')} {c('no commit', YELLOW)} {SEP} {c(f'took: {took}s', DIM)}")
+            if not opts.quiet_mode:
+                print(f"{gen_label('⚪')} {c('no commit', YELLOW)} {SEP} {c(f'took: {took}s', DIM)}")
         else:
             run_committed.append(generation_end[:7])
-            print(
-                f"{gen_label('✅')} {c('committed', GREEN)} {c(generation_end[:7], GREEN)} {SEP} {c(f'took: {took}s', DIM)}"
-            )
+            if not opts.quiet_mode:
+                print(
+                    f"{gen_label('✅')} {c('committed', GREEN)} {c(generation_end[:7], GREEN)} {SEP} {c(f'took: {took}s', DIM)}"
+                )
+
+        if opts.verbose_mode and not opts.quiet_mode:
+            _print_verbose_timing(generation, took, gen_output_path)
 
         if generation < generations:
-            print(SEP + LINE * (header_width - 2) + SEP)
+            if not opts.quiet_mode:
+                print(SEP + LINE * (header_width - 2) + SEP)
             try:
                 time.sleep(sleep_seconds)
             except KeyboardInterrupt:
-                print(f"\n{gen_label('✗')} {c('interrupted', RED)}", flush=True)
+                if not opts.quiet_mode:
+                    print(f"\n{gen_label('✗')} {c('interrupted', RED)}", flush=True)
                 return 130
 
-    print(SEP + LINE * (header_width - 2) + SEP)
+    if not opts.quiet_mode:
+        print(SEP + LINE * (header_width - 2) + SEP)
     summary = _run_summary(opts.goal_text, gen_log_paths, run_committed, run_total)
-    print(f"{c(f'{SEP} PSP DONE', CYAN)} {SEP} {summary}")
+    if opts.quiet_mode:
+        print(summary)
+    else:
+        print(f"{c(f'{SEP} PSP DONE', CYAN)} {SEP} {summary}")
 
     if opts.keep_logs == "session":
         for path in gen_log_paths:
             Path(path).unlink(missing_ok=True)
 
     return 1
+
+
+def _print_verbose_timing(generation: int, took: int, gen_output_path: str | None) -> None:
+    """Print detailed timing info for --verbose mode."""
+    parts = [c(f"  [verbose] gen {generation}", DIM)]
+    parts.append(c(f"wall: {took}s", CYAN))
+    if gen_output_path:
+        p = Path(gen_output_path)
+        if p.exists():
+            size = p.stat().st_size
+            if size >= 1024 * 1024:
+                size_str = f"{size / (1024 * 1024):.1f} MB"
+            elif size >= 1024:
+                size_str = f"{size / 1024:.1f} KB"
+            else:
+                size_str = f"{size} B"
+            parts.append(c(f"log: {size_str}", DIM))
+    print(" ".join(parts))
 
 
 _SIGNAL_RE = re.compile(
@@ -1096,14 +1237,47 @@ def main(argv: list[str]) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     script_path = resolve_path(Path(__file__))
     opts = Options(script_path=script_path, script_dir=script_path.parent)
-    load_config(opts)
 
+    # Parse args first to know --no-color and --config before loading config
     parsed = parse_args(opts, argv)
     if parsed is not None:
         return parsed
 
+    # Initialize color system based on --no-color
+    global _COLOR_ENABLED
+    _COLOR_ENABLED = not opts.no_color
+    _init_colors()
+
+    # Load config (supports --config PATH override)
+    if opts.config_path:
+        cfg = Path(opts.config_path)
+        if not cfg.is_file():
+            quit_with(f"Config file not found: {opts.config_path}")
+        _load_config_file(opts, cfg, opts.config_path)
+    else:
+        load_config(opts)
+
     if opts.config_show:
         return print_config_show(opts)
+
+    if opts.print_plan:
+        if not opts.goal_text:
+            if opts.plan_explicit:
+                plan_text = Path(opts.plan_path).read_text(encoding="utf-8")
+                sys.stdout.write(plan_text)
+                return 0
+            # Need to read goal from stdin for builtin plan
+            read_goal(opts)
+            if not opts.goal_text:
+                quit_with("--print-plan requires a goal (--goal or stdin) or an explicit plan (--plan)")
+        effective_plan, tmp_plan = prepare_effective_plan(opts)
+        try:
+            plan_text = Path(effective_plan).read_text(encoding="utf-8")
+            sys.stdout.write(plan_text)
+            return 0
+        finally:
+            if tmp_plan:
+                Path(tmp_plan).unlink(missing_ok=True)
 
     if opts.install_mode:
         install_self(opts)
@@ -1118,6 +1292,12 @@ def main(argv: list[str]) -> int:
         if not goals:
             quit_with("No history to continue from")
         opts.goal_text = goals[-1]
+
+    if opts.cwd_override:
+        cwd_path = Path(opts.cwd_override).resolve()
+        if not cwd_path.is_dir():
+            quit_with(f"Directory not found: {opts.cwd_override}")
+        os.chdir(cwd_path)
 
     read_goal(opts)
 
@@ -1162,9 +1342,10 @@ def main(argv: list[str]) -> int:
         header_width = len(re.sub(r"\033\[[0-9;]*m", "", header))
         print(SEP + LINE * (header_width - 2) + SEP)
 
-    if opts.dry_run == 1:
+    if opts.dry_run:
         plan_display = opts.plan_path if opts.plan_explicit else "(builtin)"
-        print_header(plan_display)
+        if not opts.no_banner:
+            print_header(plan_display)
         command_text = "".join(f" {bash_quote(part)}" for part in agent_command)
         if not opts.plan_explicit:
             print(f"PSP DRY RUN |{command_text} < <(builtin_plan_template {bash_quote(opts.goal_text)})")
@@ -1181,7 +1362,8 @@ def main(argv: list[str]) -> int:
 
     effective_plan, tmp_plan = prepare_effective_plan(opts)
     plan_display = os.path.basename(tmp_plan) if tmp_plan else opts.plan_path
-    print_header(plan_display)
+    if not opts.no_banner:
+        print_header(plan_display)
     try:
         return run_generation_loop(opts, agent_command, effective_plan, plan_display, header_width)
     finally:

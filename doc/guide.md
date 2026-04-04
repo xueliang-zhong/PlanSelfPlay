@@ -99,6 +99,16 @@ Usage: psp [options] [plan-path]
 | `--continue, -C` | Re-run the last goal from history (like `!!` in bash) |
 | `--fzf` | Browse past goals with metadata preview |
 | `--logs` | Print generation log paths (one per line) |
+| `--no-color` | Disable ANSI color output |
+| `--quiet, -q` | Suppress progress output, show only summary |
+| `--stop-on-error` | Abort the loop on first agent failure |
+| `--cwd PATH` | Run in a different working directory |
+| `--verbose` | Show detailed timing and debug info |
+| `--print-plan` | Print the effective plan and exit |
+| `--model MODEL` | LLM model to use (e.g. gpt-4o, claude-sonnet-4-20250514) |
+| `--config PATH` | Use an alternative config file instead of ~/.psp/config.toml |
+| `--no-banner` | Suppress the header line |
+| `--env KEY=VALUE` | Pass an environment variable to the agent (repeatable) |
 | `-V, --version` | Print version and exit |
 | `-h, --help` | Show help |
 

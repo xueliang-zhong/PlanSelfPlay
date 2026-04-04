@@ -268,7 +268,7 @@ class PSPPortTests(unittest.TestCase):
         )
 
         self.assertEqual(result["returncode"], 0)
-        self.assertEqual(result["stdout"].strip(), "psp 0.2.2-dev (<HASH>)")
+        self.assertEqual(result["stdout"].strip(), "psp 0.3.0-dev (<HASH>)")
         self.assertEqual(result["stderr"], "")
 
     def test_version_omits_git_sha_without_installed_metadata(self) -> None:
@@ -282,7 +282,7 @@ class PSPPortTests(unittest.TestCase):
         )
 
         self.assertEqual(result["returncode"], 0)
-        self.assertEqual(result["stdout"].strip(), "psp 0.2.2-dev")
+        self.assertEqual(result["stdout"].strip(), "psp 0.3.0-dev")
         self.assertEqual(result["stderr"], "")
 
     def test_claude_yolo_dry_run_matches_shell(self) -> None:
@@ -538,6 +538,140 @@ class PSPPortTests(unittest.TestCase):
         bin_dir = home / ".local" / "bin"
         bin_dir.mkdir(parents=True, exist_ok=True)
         (bin_dir / ".psp-version").write_text("abcdef1\n", encoding="utf-8")
+
+    def test_no_color_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--no-color", "--dry-run"], stdin="test goal\n")
+
+    def test_quiet_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--quiet", "--dry-run"], stdin="test goal\n")
+
+    def test_verbose_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--verbose", "--dry-run"], stdin="test goal\n")
+
+    def test_stop_on_error_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--stop-on-error", "--dry-run"], stdin="test goal\n")
+
+    def test_cwd_invalid_directory_exits_with_error(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--cwd", "/nonexistent/path/xyz", "--dry-run"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("Directory not found", result["stderr"])
+
+    def test_config_show_includes_new_flags(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--config-show"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("quiet", result["stdout"])
+        self.assertIn("stop_on_error", result["stdout"])
+        self.assertIn("verbose", result["stdout"])
+
+    def test_print_plan_with_goal(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--print-plan"],
+            stdin="test goal\n",
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("GOAL: test goal", result["stdout"])
+        self.assertIn("DOMAIN:", result["stdout"])
+
+    def test_print_plan_with_explicit_plan(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            (workdir / "plan.txt").write_text("DOMAIN: test\nGOAL: old\n", encoding="utf-8")
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--print-plan", "--plan", "plan.txt"],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertEqual(result["stdout"], "DOMAIN: test\nGOAL: old\n")
+
+    def test_print_plan_without_goal_or_plan_exits_with_error(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--print-plan"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("--print-plan requires", result["stderr"])
+
+    def test_no_banner_dry_run_hides_header(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--no-banner", "--dry-run"],
+            stdin="test goal\n",
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertNotIn("PSP STEP", result["stdout"])
+        self.assertIn("PSP DRY RUN", result["stdout"])
+
+    def test_no_banner_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--no-banner", "--dry-run"], stdin="test goal\n")
+
+    def test_model_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--model", "gpt-4o", "--dry-run"], stdin="test goal\n")
+
+    def test_config_invalid_file_exits_with_error(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--config", "/nonexistent/config.toml", "--dry-run"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("Config file not found", result["stderr"])
+
+    def test_config_show_includes_no_banner_and_model(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--config-show"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("no_banner", result["stdout"])
+        self.assertIn("model", result["stdout"])
+
+    def test_env_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--env", "FOO=bar", "--env", "BAZ=qux", "--dry-run"], stdin="test goal\n")
+
+    def test_options_use_bool_types(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        for attr in ("dry_run", "install_mode", "plan_seen", "yolo_mode", "fzf_mode",
+                     "tmux_mode", "logs_mode", "history_mode", "continue_mode",
+                     "config_show", "no_color", "quiet_mode", "stop_on_error",
+                     "verbose_mode", "print_plan", "no_banner"):
+            self.assertIsInstance(getattr(opts, attr), bool, f"{attr} should be bool")
 
 
 if __name__ == "__main__":
