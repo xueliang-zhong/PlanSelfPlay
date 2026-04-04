@@ -335,7 +335,8 @@ def install_self(opts: Options) -> None:
 def append_history(opts: Options, plan_display: str) -> None:
     opts.psp_dir.mkdir(parents=True, exist_ok=True)
     history_path = opts.psp_dir / "history"
-    goal_field = opts.goal_text if opts.goal_text else f"(plan: {plan_display})"
+    raw = opts.goal_text if opts.goal_text else f"(plan: {plan_display})"
+    goal_field = " ".join(raw.split())
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with history_path.open("a", encoding="utf-8") as handle:
         handle.write(f"{timestamp}\t{opts.agent}\t{Path.cwd()}\tg={opts.generations}\t{goal_field}\n")
@@ -1018,7 +1019,8 @@ def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], 
 
     goal_display = ""
     if goal:
-        short = goal if len(goal) <= 40 else goal[:40] + "…"
+        flat = " ".join(goal.split())
+        short = flat if len(flat) <= 40 else flat[:40] + "…"
         goal_display = c("goal: ", DIM) + c(short, CYAN)
 
     if not memory.exists():
@@ -1088,7 +1090,8 @@ def main(argv: list[str]) -> int:
     yolo_note = (f" {SEP} {c('⚠ yolo', RED, BOLD)}") if opts.yolo_mode else ""
     goal_note = ""
     if opts.goal_text:
-        g = opts.goal_text[:33] + (" …" if len(opts.goal_text) > 33 else "")
+        flat = " ".join(opts.goal_text.split())
+        g = flat[:33] + (" …" if len(flat) > 33 else "")
         goal_note = f" {SEP} {c('goal:', DIM)} {c(g, CYAN)}"
 
     header_width = 0
