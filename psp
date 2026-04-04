@@ -1121,20 +1121,20 @@ def main(argv: list[str]) -> int:
 
     read_goal(opts)
 
-    if opts.tmux_mode and not os.environ.get("PSP_TMUX_CHILD"):
-        if launch_tmux(opts, argv):
-            return 0
-
     if opts.init_plan_path:
         init_plan_path = Path(opts.init_plan_path)
         if init_plan_path.exists():
             quit_with(f"Refusing to overwrite existing file: {opts.init_plan_path}")
         init_plan_path.write_text(
-            builtin_plan_template("describe the improvement you want here"),
+            builtin_plan_template("[[describe the improvement you want here]]"),
             encoding="utf-8",
         )
         print(f"Wrote starter plan to {opts.init_plan_path}")
         return 0
+
+    if opts.tmux_mode and not os.environ.get("PSP_TMUX_CHILD"):
+        if launch_tmux(opts, argv):
+            return 0
 
     apply_agent_presets(opts)
     validate(opts)

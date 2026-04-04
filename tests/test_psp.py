@@ -48,6 +48,26 @@ class PSPPortTests(unittest.TestCase):
     def test_init_plan_matches_shell(self) -> None:
         self.assert_parity(["--init-plan", "starter.plan"], inspect=self.inspect_init_plan)
 
+    def test_init_plan_bypasses_tmux_launch(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            previous_cwd = Path.cwd()
+            starter_plan = Path("starter.plan")
+            try:
+                os.chdir(workdir)
+                with mock.patch.object(module, "load_config"), \
+                     mock.patch.object(module, "read_goal"), \
+                     mock.patch.object(module, "launch_tmux", return_value=True) as launch_tmux_mock:
+                    exit_code = module.main(["--init-plan", "starter.plan"])
+                starter_plan_exists = starter_plan.exists()
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(exit_code, 0)
+        launch_tmux_mock.assert_not_called()
+        self.assertTrue(starter_plan_exists)
+
     def test_history_without_history_file_matches_shell(self) -> None:
         self.assert_parity(["--history"])
 
