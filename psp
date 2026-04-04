@@ -1041,6 +1041,7 @@ def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], 
 
 
 def main(argv: list[str]) -> int:
+    sys.stdout.reconfigure(line_buffering=True)
     script_path = resolve_path(Path(__file__))
     opts = Options(script_path=script_path, script_dir=script_path.parent)
     load_config(opts)
