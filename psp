@@ -1077,6 +1077,9 @@ def main(argv: list[str]) -> int:
             encoding="utf-8",
         )
         print(f"Wrote starter plan to {opts.init_plan_path}")
+        editor = os.environ.get("EDITOR", "").strip()
+        if editor:
+            os.execvp(editor, [editor, str(init_plan_path)])
         return 0
 
     apply_agent_presets(opts)

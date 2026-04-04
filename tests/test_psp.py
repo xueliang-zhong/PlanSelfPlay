@@ -46,7 +46,11 @@ class PSPPortTests(unittest.TestCase):
         self.assert_parity(["--help"])
 
     def test_init_plan_matches_shell(self) -> None:
-        self.assert_parity(["--init-plan", "starter.plan"], inspect=self.inspect_init_plan)
+        self.assert_parity(
+            ["--init-plan", "starter.plan"],
+            inspect=self.inspect_init_plan,
+            extra_env={"EDITOR": ""},
+        )
 
     def test_init_config_matches_shell(self) -> None:
         self.assert_parity(["--init-config"], inspect=self.inspect_init_config)
