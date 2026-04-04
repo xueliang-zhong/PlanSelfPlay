@@ -46,14 +46,7 @@ class PSPPortTests(unittest.TestCase):
         self.assert_parity(["--help"])
 
     def test_init_plan_matches_shell(self) -> None:
-        self.assert_parity(
-            ["--init-plan", "starter.plan"],
-            inspect=self.inspect_init_plan,
-            extra_env={"EDITOR": ""},
-        )
-
-    def test_init_config_matches_shell(self) -> None:
-        self.assert_parity(["--init-config"], inspect=self.inspect_init_config)
+        self.assert_parity(["--init-plan", "starter.plan"], inspect=self.inspect_init_plan)
 
     def test_history_without_history_file_matches_shell(self) -> None:
         self.assert_parity(["--history"])
@@ -492,15 +485,6 @@ class PSPPortTests(unittest.TestCase):
             "config.toml": self.normalize_text(config.read_text(encoding="utf-8"), workdir.parent, script_path),
             ".zshrc": self.normalize_text(zshrc.read_text(encoding="utf-8"), workdir.parent, script_path),
             ".bashrc": self.normalize_text(bashrc.read_text(encoding="utf-8"), workdir.parent, script_path),
-        }
-
-    def inspect_init_config(self, workdir: Path, home: Path, script_path: Path) -> dict[str, object]:
-        return {
-            "config.toml": self.normalize_text(
-                (home / ".psp" / "config.toml").read_text(encoding="utf-8"),
-                workdir.parent,
-                script_path,
-            )
         }
 
     def init_git_repo(self, workdir: Path) -> None:

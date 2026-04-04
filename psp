@@ -53,6 +53,7 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # agent_args  = ""            # override the full agent argument string
 # yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
 # keep_logs   = "always"      # always | session | never
+# tmux        = false         # true = always run in a new tmux split pane
 #                              #   always  — keep logs forever (default)
 #                              #   session — keep during run, delete on exit
 #                              #   never   — delete each log immediately after the generation completes
@@ -119,6 +120,7 @@ class Options:
     init_plan_path: str = ""
     yolo_mode: int = 0
     fzf_mode: int = 0
+    tmux_mode: int = 0
     logs_mode: int = 0
     history_mode: int = 0
     continue_mode: int = 0
@@ -198,6 +200,9 @@ def load_config(opts: Options) -> None:
         elif key == "yolo" and value == "true":
             opts.yolo_mode = 1
             opts._sources["yolo"] = label
+        elif key == "tmux" and value == "true":
+            opts.tmux_mode = 1
+            opts._sources["tmux"] = label
         elif key in ("keep_logs", "keep_log"):
             if value in ("always", "session", "never"):
                 opts.keep_logs = value
@@ -355,9 +360,7 @@ Options:
   --agent codex|claude|opencode, -a  Coding agent to use (default: codex)
   --plan PATH, -p                    Plan file to replay
   --install                          Install psp to ~/.local/bin and wire PATH in ~/.zshrc and ~/.bashrc
-  --init                             Initialise ~/.psp/config.toml and exit
   --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.template.txt)
-  --init-config                      Write a starter ~/.psp/config.toml and exit
   --yolo                             Use the unsafe permission-bypass preset for the selected agent
   --keep-logs always|session|never   Log retention: always=keep forever (default), session=delete on exit, never=delete after each generation
   --generations N, -g                Positive integer (default: 10)
@@ -373,6 +376,7 @@ Options:
   --history                          Print ~/.psp/history and exit (pipe through fzf | psp to re-run)
   --continue, -C                     Re-run the last goal from history (like !! in bash)
   --fzf                              Interactive goal selection with metadata preview
+  --tmux                             Run psp in a new tmux split pane (requires tmux session)
   --logs                             Print generation log paths (one per line)
    -V, --version                     Print version and exit
   -h, --help                         Show this help text
@@ -507,10 +511,10 @@ _psp_completion() {
                           COMPREPLY=($(compgen -f -- "$cur")); return ;;
         --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x) return ;;
     esac
-    local flags="--agent --plan --install --init --init-plan --init-config --yolo \\
+    local flags="--agent --plan --install --init-plan --yolo \\
         --keep-logs --generations --sleep --time-budget --output --agent-bin --agent-args \\
         --goal --config-show --generate-completion --dry-run --history --continue --fzf \\
-        --logs --version --help \\
+        --tmux --logs --version --help \\
         -a -p -i -g -s -t -o -x -G -C -V -h"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
@@ -528,9 +532,7 @@ _psp() {
         '(-a --agent)'{-a,--agent}'[coding agent to use]:agent:(codex claude opencode)'
         '(-p --plan)'{-p,--plan}'[plan file]:file:_files'
         '--install[install psp to ~/.local/bin]'
-        '--init[initialise config]'
         '(-i --init-plan)'{-i,--init-plan}'[write starter plan]:file:_files'
-        '--init-config[write config.toml]'
         '--yolo[skip permission prompts]'
         '--keep-logs[log retention]:mode:(always session never)'
         '(-g --generations)'{-g,--generations}'[number of generations]:n'
@@ -546,6 +548,7 @@ _psp() {
         '--history[print past goals]'
         '(-C --continue)'{-C,--continue}'[re-run last goal]'
         '--fzf[interactive goal selection]'
+        '--tmux[run in a new tmux split pane]'
         '--logs[print log paths]'
         '(-V --version)'{-V,--version}'[print version]'
         '(-h --help)'{-h,--help}'[show help]'
@@ -583,11 +586,6 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             return 0
         if current == "--install":
             opts.install_mode = 1
-        elif current == "--init":
-            init_all(opts.psp_dir)
-            return 0
-        elif current == "--init-config":
-            return write_default_config(opts.psp_dir)
         elif current == "--history":
             opts.history_mode = 1
         elif current in ("--continue", "-C"):
@@ -597,6 +595,8 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             index += 1
         elif current == "--fzf":
             opts.fzf_mode = 1
+        elif current == "--tmux":
+            opts.tmux_mode = 1
         elif current == "--logs":
             opts.logs_mode = 1
         elif current == "--config-show":
@@ -686,6 +686,7 @@ _CONFIG_SHOW_KEYS = [
     ("agent_bin",   "agent_bin",       ""),
     ("agent_args",  "agent_args_text", ""),
     ("yolo",        "yolo_mode",       "false"),
+    ("tmux",        "tmux_mode",       "false"),
     ("keep_logs",   "keep_logs",       "always"),
 ]
 
@@ -1040,6 +1041,33 @@ def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], 
     return f" {SEP} ".join(parts)
 
 
+def launch_tmux(opts: Options, argv: list[str]) -> bool:
+    """Launch psp in a tmux split. Returns True if launched, False to fall through."""
+    if not os.environ.get("TMUX") or shutil.which("tmux") is None:
+        return False
+
+    psp = shlex.quote(str(opts.script_path))
+
+    # Rebuild args: drop --tmux; if goal came from stdin inject --goal
+    clean = [a for a in argv if a != "--tmux"]
+    if opts.goal_text and not any(a in clean for a in ("--goal", "-G")):
+        clean = ["--goal", opts.goal_text] + clean
+
+    # PSP_TMUX_CHILD=1 prevents the child from re-entering tmux mode (config loop)
+    psp_cmd = "PSP_TMUX_CHILD=1 " + " ".join([psp] + [shlex.quote(a) for a in clean])
+    # Named trap (not SIG_IGN) so psp inherits default SIGINT and Ctrl-C kills
+    # it normally; the wrapper shell catches INT via the function and keeps
+    # the pane open until the user presses Enter.
+    inner = (
+        f"_psp_done() {{ printf '\\n[psp done — press Enter to close]\\n'; read _psp; }}; "
+        f"trap _psp_done INT; {psp_cmd}; _psp_done"
+    )
+    cmd = f"sh -c {shlex.quote(inner)}"
+    # -v = vertical split (new pane below); -d = keep focus in current pane
+    os.execvp("tmux", ["tmux", "split-window", "-v", "-d", cmd])
+    return True  # unreachable
+
+
 def main(argv: list[str]) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     script_path = resolve_path(Path(__file__))
@@ -1069,6 +1097,10 @@ def main(argv: list[str]) -> int:
 
     read_goal(opts)
 
+    if opts.tmux_mode and not os.environ.get("PSP_TMUX_CHILD"):
+        if launch_tmux(opts, argv):
+            return 0
+
     if opts.init_plan_path:
         init_plan_path = Path(opts.init_plan_path)
         if init_plan_path.exists():
@@ -1078,9 +1110,6 @@ def main(argv: list[str]) -> int:
             encoding="utf-8",
         )
         print(f"Wrote starter plan to {opts.init_plan_path}")
-        editor = os.environ.get("EDITOR", "").strip()
-        if editor:
-            os.execvp(editor, [editor, str(init_plan_path)])
         return 0
 
     apply_agent_presets(opts)

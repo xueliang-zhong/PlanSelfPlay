@@ -89,10 +89,8 @@ Usage: psp [options] [plan-path]
 | `--agent-bin PATH` | Override agent executable |
 | `--yolo` | Skip permission prompts (use with care) |
 | `--keep-logs always\|session\|never` | Log retention: always=keep forever (default), session=delete on exit, never=delete after each generation |
-| `--install` | Install psp to `~/.local/bin` and wire PATH |
-| `--init` | Initialise `~/.psp/config.toml` and exit |
+| `--install` | Install psp to `~/.local/bin`, wire PATH, and initialise `~/.psp/config.toml` |
 | `--init-plan [PATH]` | Write a starter plan file and exit |
-| `--init-config` | Write `~/.psp/config.toml` and exit |
 | `-G, --goal TEXT` | Set goal directly (stdin takes priority if piped) |
 | `--config-show` | Print resolved config with source of each value and exit |
 | `--generate-completion` | Print shell completion script (`source <(psp --generate-completion)`) |
@@ -123,9 +121,7 @@ Override with `--agent-bin` / `--agent-args`, or env vars `AGENT_BIN` / `AGENT_A
 Bootstrap once, then edit:
 
 ```bash
-psp --install         # one-shot install + PATH + config
-psp --init            # config only
-psp --init-config     # config only
+psp --install         # one-shot: install + PATH + config
 ```
 
 All keys are optional. Priority: `config.toml` < CLI flags.
