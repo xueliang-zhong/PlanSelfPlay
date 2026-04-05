@@ -207,6 +207,13 @@ class Options:
     def psp_dir(self) -> Path:
         return Path(os.environ.get("PSP_DIR", str(Path.home() / ".psp")))
 
+    @property
+    def run_dir(self) -> Path:
+        """Project-local psp/ folder for logs and temp plans."""
+        d = Path.cwd() / "psp"
+        d.mkdir(exist_ok=True)
+        return d
+
 
 def quit_with(message: str) -> NoReturn:
     print(message, file=sys.stderr)
@@ -1047,7 +1054,7 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
     if opts.history_mode:
         return print_history(opts.psp_dir, opts.format_output, opts.tac_mode)
     if opts.logs_mode:
-        return print_logs(Path.cwd(), opts.format_output, opts.tac_mode)
+        return print_logs(opts.run_dir, opts.format_output, opts.tac_mode)
     return None
 
 
@@ -1250,9 +1257,9 @@ def installed_version_sha(script_path: Path) -> str:
 def prepare_effective_plan(opts: Options) -> tuple[str, str]:
     tmp_plan = ""
     effective_plan = opts.plan_path
-    cwd = Path.cwd()
+    run_dir = opts.run_dir
     if opts.goal_text and not opts.plan_explicit:
-        handle, tmp_plan = tempfile.mkstemp(prefix="plan.tmp.", dir=cwd)
+        handle, tmp_plan = tempfile.mkstemp(prefix="plan.tmp.", dir=run_dir)
         os.close(handle)
         Path(tmp_plan).write_text(builtin_plan_template(opts.goal_text, os.path.basename(tmp_plan)), encoding="utf-8")
         effective_plan = tmp_plan
@@ -1260,7 +1267,7 @@ def prepare_effective_plan(opts: Options) -> tuple[str, str]:
         base_name = Path(opts.plan_path).name
         if "." in base_name:
             base_name = base_name.rsplit(".", 1)[0]
-        handle, tmp_plan = tempfile.mkstemp(prefix=f"{base_name}.tmp.", dir=cwd)
+        handle, tmp_plan = tempfile.mkstemp(prefix=f"{base_name}.tmp.", dir=run_dir)
         os.close(handle)
         Path(tmp_plan).write_text(rewrite_plan_goal(Path(opts.plan_path), opts.goal_text), encoding="utf-8")
         effective_plan = tmp_plan
@@ -1312,7 +1319,7 @@ def run_generation_loop(
         gen_output_path = None
         gen_log_note = ""
         if opts.output_mode == "log":
-            gen_output_path = f"{Path.cwd()}/psp_{opts.agent}_{run_ts}_gen{generation:02d}.log"
+            gen_output_path = str(opts.run_dir / f"psp_{opts.agent}_{run_ts}_gen{generation:02d}.log")
             gen_log_note = f" → {c(Path(gen_output_path).name, DIM)}"
             gen_log_paths.append(gen_output_path)
 
@@ -1560,7 +1567,7 @@ def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], 
 def print_last_run(opts: Options) -> int:
     """Show the most recent run summary (from --history and logs)."""
     goals = read_history_goals(opts.psp_dir)
-    rows = read_log_rows(Path.cwd())
+    rows = read_log_rows(opts.run_dir)
     if not goals and not rows:
         print("No previous runs found.", file=sys.stderr)
         return 1
@@ -1592,7 +1599,7 @@ def print_last_run(opts: Options) -> int:
 def print_stats(opts: Options) -> int:
     """Show run statistics from history and logs."""
     goals = read_history_goals(opts.psp_dir)
-    rows = read_log_rows(Path.cwd())
+    rows = read_log_rows(opts.run_dir)
     if not goals and not rows:
         print("No runs found.", file=sys.stderr)
         return 1
@@ -1623,7 +1630,7 @@ def print_stats(opts: Options) -> int:
 
 def follow_current_log(opts: Options) -> int:
     """Tail the most recent generation log file."""
-    rows = read_log_rows(Path.cwd())
+    rows = read_log_rows(opts.run_dir)
     if not rows:
         print("No generation logs found in current directory.", file=sys.stderr)
         return 1

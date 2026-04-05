@@ -41,11 +41,13 @@ if [[ -z "$GOAL" && -z "$PLAN_PATH" ]]; then
 fi
 
 # --- resolve plan ---
+mkdir -p psp
+
 BUILTIN_PLAN=0
 TMP_PLAN=""
 if [[ -z "$PLAN_PATH" ]]; then
   BUILTIN_PLAN=1
-  TMP_PLAN=$(mktemp plan.tmp.XXXXXXXX)
+  TMP_PLAN=$(mktemp psp/plan.tmp.XXXXXXXX)
   trap 'rm -f "$TMP_PLAN"' EXIT
 fi
 
@@ -56,7 +58,7 @@ echo "| PSP STEP | plan: $(basename "$PLAN_DISPLAY") | goal: $GOAL_DISPLAY | age
 
 # --- loop ---
 for ((i=1; i<=GENERATIONS; i++)); do
-  LOG="psp_nano_${RUN_TS}_gen$(printf '%02d' "$i").log"
+  LOG="psp/psp_nano_${RUN_TS}_gen$(printf '%02d' "$i").log"
   echo "| 🔄 PSP $i/$GENERATIONS | running ... $LOG"
 
   if [[ "$BUILTIN_PLAN" -eq 1 ]]; then

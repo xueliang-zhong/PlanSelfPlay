@@ -334,8 +334,9 @@ class PSPPortTests(unittest.TestCase):
 
     def test_logs_outputs_plain_paths(self) -> None:
         def fixture(workdir: Path, home: Path) -> None:
-            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
-            (workdir / "psp_claude_20260331T090500Z_gen02.log").write_text("two\n", encoding="utf-8")
+            (workdir / "psp").mkdir()
+            (workdir / "psp" / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+            (workdir / "psp" / "psp_claude_20260331T090500Z_gen02.log").write_text("two\n", encoding="utf-8")
 
         result = self.run_variant(
             PYTHON_ENTRYPOINT,
@@ -350,8 +351,8 @@ class PSPPortTests(unittest.TestCase):
         self.assertEqual(
             result["stdout"].splitlines(),
             [
-                "<TMP>/work/psp_codex_<RUN_TS>_gen01.log",
-                "<TMP>/work/psp_claude_<RUN_TS>_gen02.log",
+                "<TMP>/work/psp/psp_codex_<RUN_TS>_gen01.log",
+                "<TMP>/work/psp/psp_claude_<RUN_TS>_gen02.log",
             ],
         )
 
@@ -445,7 +446,7 @@ class PSPPortTests(unittest.TestCase):
             workdir.mkdir()
             home.mkdir()
 
-            launch_path = workdir / "psp"
+            launch_path = workdir / "psp-cli"
             launch_path.symlink_to(script_path)
 
             if fixture is not None:
@@ -499,12 +500,13 @@ class PSPPortTests(unittest.TestCase):
 
     def inspect_logged_run(self, workdir: Path, home: Path, script_path: Path) -> dict[str, object]:
         artifacts = self.inspect_history(workdir, home, script_path)
-        log_files = sorted(path.name for path in workdir.glob("psp_*_gen*.log"))
+        run_dir = workdir / "psp"
+        log_files = sorted(path.name for path in run_dir.glob("psp_*_gen*.log"))
         self.assertEqual(len(log_files), 2)
         artifacts["log_files"] = [self.normalize_text(name, workdir.parent, script_path) for name in log_files]
         artifacts["log_contents"] = [
             self.normalize_text(path.read_text(encoding="utf-8"), workdir.parent, script_path)
-            for path in sorted(workdir.glob("psp_*_gen*.log"))
+            for path in sorted(run_dir.glob("psp_*_gen*.log"))
         ]
         return artifacts
 
@@ -984,7 +986,8 @@ class PSPPortTests(unittest.TestCase):
 
     def test_logs_format_json(self) -> None:
         def fixture(workdir: Path, home: Path) -> None:
-            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+            (workdir / "psp").mkdir()
+            (workdir / "psp" / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
         result = self.run_variant(
             PYTHON_ENTRYPOINT,
             ["--logs", "--format", "json"],
@@ -1066,8 +1069,9 @@ class PSPPortTests(unittest.TestCase):
 
     def test_tac_logs_reverses_rows(self) -> None:
         def fixture(workdir: Path, home: Path) -> None:
-            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
-            (workdir / "psp_codex_20260331T090500Z_gen02.log").write_text("two\n", encoding="utf-8")
+            (workdir / "psp").mkdir()
+            (workdir / "psp" / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+            (workdir / "psp" / "psp_codex_20260331T090500Z_gen02.log").write_text("two\n", encoding="utf-8")
         result = self.run_variant(
             PYTHON_ENTRYPOINT,
             ["--logs", "--tac"],
@@ -1119,7 +1123,8 @@ class PSPPortTests(unittest.TestCase):
                 "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\talpha\n",
                 encoding="utf-8",
             )
-            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+            (workdir / "psp").mkdir(exist_ok=True)
+            (workdir / "psp" / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
         result = self.run_variant(
             PYTHON_ENTRYPOINT,
             ["--stats", "--format", "json"],
