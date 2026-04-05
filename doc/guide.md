@@ -116,7 +116,8 @@ Usage: psp [options] [plan-path]
 | `--last, -L` | Show last run summary |
 | `--format json` | Output in JSON format (for `--config-show`, `--history`, `--logs`, `--last`) |
 | `--follow, -f` | Tail the most recent generation log |
-| `--timeout SECONDS` | Per-generation timeout; 0 = no limit |
+| `--generation-timeout SECONDS` | Per-generation timeout; 0 = no limit |
+| `--timeout SECONDS` | Alias for `--generation-timeout` |
 | `--retry N` | Retry failed generations with backoff |
 | `--stats` | Print aggregate run statistics |
 | `--tac` | Reverse ordering for `--history` / `--logs` output |
@@ -168,7 +169,7 @@ generations = 6
 # headless    = false
 # max_turns   = ""
 # diff_mode   = false
-# timeout     = 0
+# timeout     = 0           # per-generation timeout (CLI: --generation-timeout)
 # retry       = 0
 # progress    = "auto"     # auto | plain | tty
 ```

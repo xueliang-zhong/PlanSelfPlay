@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, NoReturn, TextIO
 
 
-VERSION = "0.2.1-dev"
+VERSION = "0.3.0-dev"
 
 # ── Signal handling for graceful shutdown ────────────────────────────────────
 _shutdown_requested = False
@@ -101,7 +101,7 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # max_turns   = ""            # max conversation turns per generation (from codex)
 # diff_mode   = false         # true = show git diff after each generation
 # clean_mode  = false         # true = skip loading config file (from neovim --clean)
-# timeout     = 0             # per-generation wall-clock cap in seconds (0 = no limit)
+# timeout     = 0             # per-generation wall-clock cap in seconds (0 = no limit; CLI: --generation-timeout)
 # retry       = 0             # retry failed generations this many times with backoff
 # progress    = "auto"        # auto | plain | tty (output verbosity, from docker buildx)
 """
@@ -558,6 +558,54 @@ _AGENT_INSTALL_HINTS = [
     ("claude",   "npm install -g @anthropic-ai/claude-code"),
 ]
 
+_HELP_OPTIONS = [
+    ("--agent codex|claude|opencode, -a", "Coding agent to use (default: codex)"),
+    ("--plan PATH, -p", "Plan file to replay"),
+    ("--install", "Install psp to ~/.local/bin and wire PATH in ~/.zshrc and ~/.bashrc"),
+    ("--init-plan [PATH], -i", "Write a starter plan file and exit (default: plan.template.txt)"),
+    ("--yolo", "Use the unsafe permission-bypass preset for the selected agent"),
+    ("--keep-logs always|session|never", "Log retention: always=keep forever (default), session=delete on exit, never=delete after each generation"),
+    ("--generations N, -g", "Positive integer (default: 10)"),
+    ("--sleep SECONDS, -s", "Non-negative delay between generations"),
+    ("--time-budget SECONDS, -t", "Stop after this many wall-clock seconds (0 = no limit)"),
+    ("--output discard|inherit|log, -o", "Agent output handling (default: log = per-generation files)"),
+    ("--agent-bin PATH", "Agent executable override"),
+    ("--agent-args STRING, -x", "Full agent args override (replaces preset defaults)"),
+    ("--goal TEXT, -G", "Set the goal directly (stdin takes priority if piped)"),
+    ("--model MODEL", "LLM model to use (e.g. gpt-4o, claude-sonnet-4-20250514)"),
+    ("--config PATH", "Use an alternative config file instead of ~/.psp/config.toml"),
+    ("--config-show", "Print resolved config with source of each value and exit"),
+    ("--generate-completion", "Print a shell completion script for the current shell (source it with: source <(psp --generate-completion))"),
+    ("--dry-run", "Print the resolved command and exit"),
+    ("--history", "Print ~/.psp/history and exit (pipe through fzf | psp to re-run)"),
+    ("--continue, -C", "Re-run the last goal from history (like !! in bash)"),
+    ("--fzf", "Interactive goal selection with metadata preview"),
+    ("--tmux", "Run psp in a new tmux split pane (requires tmux session)"),
+    ("--logs", "Print generation log paths (one per line)"),
+    ("--no-color", "Disable ANSI color output"),
+    ("--no-banner", "Suppress the header line"),
+    ("--quiet, -q", "Suppress progress output, show only summary"),
+    ("--stop-on-error", "Abort the loop on first agent failure"),
+    ("--cwd PATH", "Run in a different working directory"),
+    ("--verbose", "Show detailed timing and debug info"),
+    ("--print-plan", "Print the effective plan and exit"),
+    ("--env KEY=VALUE", "Pass an environment variable to the agent (repeatable)"),
+    ("--headless, --no-input", "Suppress all interactive prompts (from neovim/opencode --headless)"),
+    ("--max-turns N", "Max conversation turns per generation (from codex --max-turns)"),
+    ("--diff", "Show git diff after each generation"),
+    ("--clean", "Skip loading config file (from neovim --clean)"),
+    ("--last, -L", "Show last run summary"),
+    ("--format json", "Output in JSON format (for --config-show, --history, --logs, --last)"),
+    ("--follow, -f", "Tail the most recent generation log"),
+    ("--generation-timeout N, --timeout N", "Per-generation wall-clock cap in seconds (0 = no limit)"),
+    ("--retry N", "Retry failed generations this many times with backoff"),
+    ("--tac", "Reverse order for --history/--logs (from fzf)"),
+    ("--stats", "Show run statistics and exit"),
+    ("--progress auto|plain|tty", "Output verbosity (from docker buildx)"),
+    ("-V, --version", "Print version and exit"),
+    ("-h, --help", "Show this help text"),
+]
+
 
 def warn_if_no_agent() -> None:
     missing = [name for name, _ in _AGENT_INSTALL_HINTS if shutil.which(name) is None]
@@ -582,6 +630,11 @@ def append_history(opts: Options, plan_display: str) -> None:
 def usage(prog: str, *, stream: TextIO | None = None) -> None:
     if stream is None:
         stream = sys.stdout
+    option_width = max(len(option) for option, _ in _HELP_OPTIONS)
+    option_lines = "\n".join(
+        f"  {option:<{option_width}}  {description}"
+        for option, description in _HELP_OPTIONS
+    )
     stream.write(
         f"""Usage: {prog} [options] [plan-path]
        echo "GOAL" | {prog} [options]
@@ -589,51 +642,7 @@ Replay a pure-text PLAN through a coding agent (codex, claude, or opencode).
 When stdin is a pipe the goal is read from it; a plan file is optional.
 
 Options:
-  --agent codex|claude|opencode, -a  Coding agent to use (default: codex)
-  --plan PATH, -p                    Plan file to replay
-  --install                          Install psp to ~/.local/bin and wire PATH in ~/.zshrc and ~/.bashrc
-  --init-plan [PATH], -i             Write a starter plan file and exit (default: plan.template.txt)
-  --yolo                             Use the unsafe permission-bypass preset for the selected agent
-  --keep-logs always|session|never   Log retention: always=keep forever (default), session=delete on exit, never=delete after each generation
-  --generations N, -g                Positive integer (default: 10)
-  --sleep SECONDS, -s                Non-negative delay between generations
-  --time-budget SECONDS, -t          Stop after this many wall-clock seconds (0 = no limit)
-  --output discard|inherit|log, -o   Agent output handling (default: log = per-generation files)
-  --agent-bin PATH                   Agent executable override
-  --agent-args STRING, -x            Full agent args override (replaces preset defaults)
-  --goal TEXT, -G                    Set the goal directly (stdin takes priority if piped)
-  --model MODEL                      LLM model to use (e.g. gpt-4o, claude-sonnet-4-20250514)
-  --config PATH                      Use an alternative config file instead of ~/.psp/config.toml
-  --config-show                      Print resolved config with source of each value and exit
-  --generate-completion              Print a shell completion script for the current shell (source it with: source <(psp --generate-completion))
-  --dry-run                          Print the resolved command and exit
-  --history                          Print ~/.psp/history and exit (pipe through fzf | psp to re-run)
-  --continue, -C                     Re-run the last goal from history (like !! in bash)
-   --fzf                              Interactive goal selection with metadata preview
-   --tmux                             Run psp in a new tmux split pane (requires tmux session)
-   --logs                             Print generation log paths (one per line)
-   --no-color                         Disable ANSI color output
-   --no-banner                        Suppress the header line
-   --quiet, -q                        Suppress progress output, show only summary
-   --stop-on-error                    Abort the loop on first agent failure
-   --cwd PATH                         Run in a different working directory
-   --verbose                          Show detailed timing and debug info
-   --print-plan                       Print the effective plan and exit
-    --env KEY=VALUE                    Pass an environment variable to the agent (repeatable)
-     --headless, --no-input             Suppress all interactive prompts (from neovim/opencode --headless)
-     --max-turns N                      Max conversation turns per generation (from codex --max-turns)
-     --diff                             Show git diff after each generation
-     --clean                            Skip loading config file (from neovim --clean)
-     --last, -L                         Show last run summary
-     --format json                      Output in JSON format (for --config-show, --history, --logs, --last)
-      --follow, -f                       Tail the most recent generation log
-      --timeout N                        Per-generation wall-clock cap in seconds (0 = no limit)
-      --retry N                          Retry failed generations this many times with backoff
-       --tac                              Reverse order for --history/--logs (from fzf)
-       --stats                            Show run statistics and exit
-       --progress auto|plain|tty          Output verbosity (from docker buildx)
-        -V, --version                     Print version and exit
-    -h, --help                         Show this help text
+{option_lines}
 
 Agent presets (overridable via --agent-args):
   codex     -> codex --full-auto exec -
@@ -778,14 +787,14 @@ _psp_completion() {
         --progress)       COMPREPLY=($(compgen -W "auto plain tty" -- "$cur")); return ;;
         --plan|-p|--agent-bin|--goal|-G|--cwd|--config|--model)
                           COMPREPLY=($(compgen -f -- "$cur")); return ;;
-        --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x|--env|--max-turns|--format|--timeout|--retry|--progress) return ;;
+        --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x|--env|--max-turns|--format|--generation-timeout|--timeout|--retry|--progress) return ;;
     esac
     local flags="--agent --plan --install --init-plan --yolo \\
         --keep-logs --generations --sleep --time-budget --output --agent-bin --agent-args \\
         --goal --model --config --config-show --generate-completion --dry-run --history --continue --fzf \\
         --tmux --logs --no-color --no-banner --quiet --stop-on-error --cwd --verbose --print-plan --env \\
         --headless --no-input --max-turns --diff --clean --last --format --follow \\
-        --timeout --retry --tac --stats --progress \\
+        --generation-timeout --timeout --retry --tac --stats --progress \\
         --version --help \\
         -a -p -i -g -s -t -o -x -G -C -q -V -h -L -f"
     if [[ "$cur" == -* ]]; then
@@ -840,7 +849,8 @@ _psp() {
         '(-L --last)'{-L,--last}'[show last run summary]'
         '--format[output format]:format:(json)'
         '(-f --follow)'{-f,--follow}'[tail the most recent generation log]'
-        '--timeout[per-generation wall-clock cap]:seconds'
+        '--generation-timeout[per-generation wall-clock cap]:seconds'
+        '--timeout[alias for --generation-timeout]:seconds'
         '--retry[retry failed generations]:n'
         '--tac[reverse order for --history/--logs]'
         '--stats[show run statistics]'
@@ -951,7 +961,7 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             index += 1
         elif current in ("--follow", "-f"):
             opts.follow_mode = True
-        elif current == "--timeout":
+        elif current in ("--generation-timeout", "--timeout"):
             opts.timeout_seconds = arg_value(argv, index, current)
             opts._sources["timeout"] = current
             index += 1
@@ -1376,6 +1386,11 @@ def run_generation_loop(
             if proc.returncode == 0 or attempt >= max_retries:
                 break
             attempt += 1
+
+        if _shutdown_requested:
+            if not opts.quiet_mode:
+                print(f"{c('PSP', CYAN, BOLD)} {SEP} {c('signal received, shutting down', YELLOW)}")
+            return 130
 
         if proc.returncode != 0:
             if opts.stop_on_error:

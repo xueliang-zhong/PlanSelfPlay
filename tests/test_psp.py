@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import re
 import shutil
@@ -44,6 +45,25 @@ class PSPPortTests(unittest.TestCase):
 
     def test_help_matches_shell(self) -> None:
         self.assert_parity(["--help"])
+
+    def test_help_option_indentation_is_uniform(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--help"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        lines = result["stdout"].splitlines()
+        start = lines.index("Options:") + 1
+        end = lines.index("Agent presets (overridable via --agent-args):")
+        option_lines = [line for line in lines[start:end] if line.strip()]
+        self.assertTrue(option_lines)
+        for line in option_lines:
+            self.assertTrue(line.startswith("  "), line)
+            self.assertFalse(line.startswith("   "), line)
 
     def test_init_plan_matches_shell(self) -> None:
         self.assert_parity(["--init-plan", "starter.plan"], inspect=self.inspect_init_plan)
@@ -1023,6 +1043,9 @@ class PSPPortTests(unittest.TestCase):
     def test_timeout_dry_run_matches_shell(self) -> None:
         self.assert_parity(["--timeout", "60", "--dry-run"], stdin="test goal\n")
 
+    def test_generation_timeout_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--generation-timeout", "60", "--dry-run"], stdin="test goal\n")
+
     def test_retry_dry_run_matches_shell(self) -> None:
         self.assert_parity(["--retry", "3", "--dry-run"], stdin="test goal\n")
 
@@ -1116,6 +1139,18 @@ class PSPPortTests(unittest.TestCase):
         result = self.run_variant(
             PYTHON_ENTRYPOINT,
             ["--timeout", "-1", "--dry-run"],
+            stdin="test goal\n",
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("TIMEOUT", result["stderr"])
+
+    def test_generation_timeout_validation_rejects_negative(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--generation-timeout", "-1", "--dry-run"],
             stdin="test goal\n",
             fixture=None,
             inspect=None,
@@ -1294,6 +1329,69 @@ class PSPPortTests(unittest.TestCase):
         module._shutdown_requested = False
         module._handle_signal(15, None)  # SIGTERM
         self.assertTrue(module._shutdown_requested)
+
+    def test_run_generation_loop_exits_immediately_after_signal_terminated_child(self) -> None:
+        module = load_python_psp_module()
+
+        class FakeProc:
+            def __init__(self) -> None:
+                self.returncode = None
+
+            def wait(self, timeout=None) -> None:
+                module._shutdown_requested = True
+                self.returncode = -15
+
+            def poll(self):
+                return self.returncode
+
+            def terminate(self) -> None:
+                self.returncode = -15
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            plan = workdir / "plan.txt"
+            plan.write_text("DOMAIN: test\nGOAL: test\n", encoding="utf-8")
+            dummy = workdir / "psp"
+            opts = module.Options(script_path=dummy, script_dir=workdir)
+            opts.agent = "codex"
+            opts.generations = "2"
+            opts.sleep_seconds = "0"
+            opts.output_mode = "discard"
+            opts.keep_logs = "always"
+            opts.quiet_mode = False
+            opts.timeout_seconds = "0"
+            opts.retry_count = "0"
+            output = io.StringIO()
+            previous_cwd = Path.cwd()
+            module._shutdown_requested = False
+            module._current_proc = None
+            module._COLOR_ENABLED = False
+            module._init_colors()
+            try:
+                os.chdir(workdir)
+                with mock.patch.object(module, "append_history"), \
+                     mock.patch.object(module, "git_head", return_value="abc1234"), \
+                     mock.patch.object(module.subprocess, "Popen", return_value=FakeProc()), \
+                     mock.patch("sys.stdout", output):
+                    exit_code = module.run_generation_loop(
+                        opts,
+                        ["fake-agent"],
+                        str(plan),
+                        "plan.txt",
+                        header_width=9,
+                    )
+            finally:
+                os.chdir(previous_cwd)
+                module._shutdown_requested = False
+                module._current_proc = None
+
+        self.assertEqual(exit_code, 130)
+        self.assertIn("signal received, shutting down", output.getvalue())
+        self.assertNotIn("agent failed", output.getvalue())
+        self.assertNotIn("no commit", output.getvalue())
 
     def test_config_show_dry_run_matches_shell(self) -> None:
         self.assert_parity(["--config-show", "--dry-run"], stdin="test goal\n")
