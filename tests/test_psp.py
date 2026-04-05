@@ -542,6 +542,30 @@ class PSPPortTests(unittest.TestCase):
     def test_no_color_dry_run_matches_shell(self) -> None:
         self.assert_parity(["--no-color", "--dry-run"], stdin="test goal\n")
 
+    def test_non_tty_stdout_disables_color_by_default(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(workdir)
+                with mock.patch.object(module, "load_config"), \
+                     mock.patch.object(module, "launch_tmux", return_value=False), \
+                     mock.patch("sys.stdin") as mock_stdin, \
+                     mock.patch("sys.stdout") as mock_stdout:
+                    mock_stdin.isatty.return_value = False
+                    mock_stdin.read.return_value = "test goal\n"
+                    mock_stdout.isatty.return_value = False
+
+                    exit_code = module.main(["--dry-run"])
+                    stdout_text = "".join(call.args[0] for call in mock_stdout.write.call_args_list)
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(exit_code, 0)
+        self.assertNotRegex(stdout_text, r"\x1b\[[0-9;]*m")
+        self.assertNotIn("m| PSP STEP", stdout_text)
+
     def test_quiet_dry_run_matches_shell(self) -> None:
         self.assert_parity(["--quiet", "--dry-run"], stdin="test goal\n")
 
@@ -576,6 +600,129 @@ class PSPPortTests(unittest.TestCase):
         self.assertIn("quiet", result["stdout"])
         self.assertIn("stop_on_error", result["stdout"])
         self.assertIn("verbose", result["stdout"])
+
+    def test_cli_configurable_options_override_config_file(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            history_dir = home / ".psp"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            (history_dir / "config.toml").write_text(
+                "\n".join(
+                    [
+                        'agent = "claude"',
+                        'generations = "9"',
+                        'sleep = "7"',
+                        'time_budget = "99"',
+                        'output = "discard"',
+                        'agent_bin = "/bin/echo"',
+                        'agent_args = "config args"',
+                        'yolo = true',
+                        'tmux = false',
+                        'keep_logs = "never"',
+                        'quiet = true',
+                        'stop_on_error = true',
+                        'verbose = true',
+                        'no_color = true',
+                        'no_banner = true',
+                        'model = "config-model"',
+                        'headless = true',
+                        'max_turns = "77"',
+                        'diff_mode = true',
+                    ]
+                ) + "\n",
+                encoding="utf-8",
+            )
+
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            [
+                "--config-show",
+                "-a", "codex",
+                "-g", "2",
+                "-s", "1",
+                "-t", "3",
+                "-o", "log",
+                "--agent-bin", "/bin/cat",
+                "-x", "cli args",
+                "--yolo",
+                "--tmux",
+                "--keep-logs", "always",
+                "--quiet",
+                "--stop-on-error",
+                "--verbose",
+                "--no-color",
+                "--no-banner",
+                "--model", "cli-model",
+                "--headless",
+                "--max-turns", "11",
+                "--diff",
+                "--format", "json",
+            ],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env=None,
+        )
+
+        self.assertEqual(result["returncode"], 0)
+        import json
+        data = json.loads(result["stdout"])
+        self.assertEqual(data["agent"], "codex")
+        self.assertEqual(data["generations"], "2")
+        self.assertEqual(data["sleep"], "1")
+        self.assertEqual(data["time_budget"], "3")
+        self.assertEqual(data["output"], "log")
+        self.assertEqual(data["agent_bin"], "/bin/cat")
+        self.assertEqual(data["agent_args"], "cli args")
+        self.assertEqual(data["yolo"], "true")
+        self.assertEqual(data["tmux"], "true")
+        self.assertEqual(data["keep_logs"], "always")
+        self.assertEqual(data["quiet"], "true")
+        self.assertEqual(data["stop_on_error"], "true")
+        self.assertEqual(data["verbose"], "true")
+        self.assertEqual(data["no_color"], "true")
+        self.assertEqual(data["no_banner"], "true")
+        self.assertEqual(data["model"], "cli-model")
+        self.assertEqual(data["headless"], "true")
+        self.assertEqual(data["max_turns"], "11")
+        self.assertEqual(data["diff_mode"], "true")
+
+    def test_env_overrides_config_file_but_cli_still_wins(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            history_dir = home / ".psp"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            (history_dir / "config.toml").write_text(
+                "\n".join(
+                    [
+                        'agent = "claude"',
+                        'quiet = false',
+                        'progress = "auto"',
+                    ]
+                ) + "\n",
+                encoding="utf-8",
+            )
+
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--config-show", "--agent", "codex", "--format", "json"],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env={
+                "PSP_AGENT": "opencode",
+                "PSP_QUIET": "true",
+                "PSP_PROGRESS": "plain",
+            },
+        )
+
+        self.assertEqual(result["returncode"], 0)
+        import json
+        data = json.loads(result["stdout"])
+        self.assertEqual(data["agent"], "codex")
+        self.assertEqual(data["quiet"], "true")
+        self.assertEqual(data["progress"], "plain")
+        self.assertEqual(data["_sources"]["agent"], "--agent")
+        self.assertEqual(data["_sources"]["quiet"], "env:PSP_QUIET")
+        self.assertEqual(data["_sources"]["progress"], "env:PSP_PROGRESS")
 
     def test_print_plan_with_goal(self) -> None:
         result = self.run_variant(

@@ -48,11 +48,11 @@ def _color(code: str) -> str:
     return f"\033[{code}m"
 
 def _c(code: str) -> str:
-    """Return ANSI escape if colors are enabled, else empty string."""
-    return _color(code) if _COLOR_ENABLED else ""
+    """Return the raw ANSI code string used by c()."""
+    return code
 
 def _init_colors() -> None:
-    """Initialize color constants after --no-color is known."""
+    """Initialize color code constants after color mode is known."""
     global RESET, BOLD, DIM, CYAN, GREEN, YELLOW, RED, PINK, SEP, LINE
     RESET  = _c("0")
     BOLD   = _c("1")
@@ -224,12 +224,16 @@ def builtin_plan_template(goal: str, plan_file: str = "") -> str:
 
 def _cfg_str(opts: Options, value: str, label: str, attr: str, src_key: str) -> None:
     """Set a string config attribute."""
+    if src_key in opts._sources:
+        return
     setattr(opts, attr, value)
     opts._sources[src_key] = label
 
 
 def _cfg_bool(opts: Options, value: str, label: str, attr: str, src_key: str) -> None:
     """Set a bool config attribute when value is 'true'."""
+    if src_key in opts._sources:
+        return
     if value == "true":
         setattr(opts, attr, True)
         opts._sources[src_key] = label
@@ -237,6 +241,8 @@ def _cfg_bool(opts: Options, value: str, label: str, attr: str, src_key: str) ->
 
 def _cfg_keep_logs(opts: Options, value: str, label: str, _attr: str, src_key: str) -> None:
     """Handle keep_logs with legacy bool compatibility."""
+    if src_key in opts._sources:
+        return
     if value in ("always", "session", "never"):
         opts.keep_logs = value
         opts._sources[src_key] = label
@@ -249,6 +255,8 @@ def _cfg_keep_logs(opts: Options, value: str, label: str, _attr: str, src_key: s
 
 
 def _cfg_tmux(opts: Options, value: str, label: str) -> None:
+    if "tmux" in opts._sources:
+        return
     opts.tmux_mode = value == "true"
     opts._sources["tmux"] = label
 
@@ -345,39 +353,41 @@ def _apply_env_overrides(opts: Options) -> None:
     Only overrides that are explicitly set in the environment are applied.
     """
     env_map = [
-        ("PSP_AGENT",         "agent",         "str"),
-        ("PSP_GENERATIONS",   "generations",   "str"),
-        ("PSP_SLEEP",         "sleep_seconds", "str"),
-        ("PSP_TIME_BUDGET",   "time_budget",   "str"),
-        ("PSP_OUTPUT",        "output_mode",   "str"),
-        ("PSP_AGENT_BIN",     "agent_bin",     "str"),
-        ("PSP_AGENT_ARGS",    "agent_args_text", "str"),
-        ("PSP_YOLO",          "yolo_mode",     "bool"),
-        ("PSP_TMUX",          "tmux_mode",     "bool"),
-        ("PSP_KEEP_LOGS",     "keep_logs",     "keep_logs"),
-        ("PSP_QUIET",         "quiet_mode",    "bool"),
-        ("PSP_STOP_ON_ERROR", "stop_on_error", "bool"),
-        ("PSP_VERBOSE",       "verbose_mode",  "bool"),
-        ("PSP_NO_COLOR",      "no_color",      "bool"),
-        ("PSP_NO_BANNER",     "no_banner",     "bool"),
-        ("PSP_MODEL",         "model",         "str"),
-        ("PSP_HEADLESS",      "headless_mode", "bool"),
-        ("PSP_MAX_TURNS",     "max_turns",     "str"),
-        ("PSP_DIFF",          "diff_mode",     "bool"),
-        ("PSP_CLEAN",         "clean_mode",    "bool"),
-        ("PSP_TIMEOUT",       "timeout_seconds", "str"),
-        ("PSP_RETRY",         "retry_count",   "str"),
-        ("PSP_TAC",           "tac_mode",      "bool"),
-        ("PSP_STATS",         "stats_mode",    "bool"),
-        ("PSP_PROGRESS",      "progress_mode", "str"),
+        ("PSP_AGENT",         "agent",         "agent",         "str"),
+        ("PSP_GENERATIONS",   "generations",   "generations",   "str"),
+        ("PSP_SLEEP",         "sleep_seconds", "sleep",         "str"),
+        ("PSP_TIME_BUDGET",   "time_budget",   "time_budget",   "str"),
+        ("PSP_OUTPUT",        "output_mode",   "output",        "str"),
+        ("PSP_AGENT_BIN",     "agent_bin",     "agent_bin",     "str"),
+        ("PSP_AGENT_ARGS",    "agent_args_text", "agent_args",  "str"),
+        ("PSP_YOLO",          "yolo_mode",     "yolo",          "bool"),
+        ("PSP_TMUX",          "tmux_mode",     "tmux",          "bool"),
+        ("PSP_KEEP_LOGS",     "keep_logs",     "keep_logs",     "keep_logs"),
+        ("PSP_QUIET",         "quiet_mode",    "quiet",         "bool"),
+        ("PSP_STOP_ON_ERROR", "stop_on_error", "stop_on_error", "bool"),
+        ("PSP_VERBOSE",       "verbose_mode",  "verbose",       "bool"),
+        ("PSP_NO_COLOR",      "no_color",      "no_color",      "bool"),
+        ("PSP_NO_BANNER",     "no_banner",     "no_banner",     "bool"),
+        ("PSP_MODEL",         "model",         "model",         "str"),
+        ("PSP_HEADLESS",      "headless_mode", "headless",      "bool"),
+        ("PSP_MAX_TURNS",     "max_turns",     "max_turns",     "str"),
+        ("PSP_DIFF",          "diff_mode",     "diff_mode",     "bool"),
+        ("PSP_CLEAN",         "clean_mode",    "clean_mode",    "bool"),
+        ("PSP_TIMEOUT",       "timeout_seconds", "timeout",     "str"),
+        ("PSP_RETRY",         "retry_count",   "retry",         "str"),
+        ("PSP_TAC",           "tac_mode",      "tac",           "bool"),
+        ("PSP_STATS",         "stats_mode",    "stats",         "bool"),
+        ("PSP_PROGRESS",      "progress_mode", "progress",      "str"),
     ]
 
-    for env_name, attr, kind in env_map:
+    for env_name, attr, src_key, kind in env_map:
+        if src_key in opts._sources:
+            continue
         if kind == "bool":
             val = _env_bool(env_name)
             if val is not None:
                 setattr(opts, attr, val == "true")
-                opts._sources[attr] = f"env:{env_name}"
+                opts._sources[src_key] = f"env:{env_name}"
         elif kind == "keep_logs":
             val = _env_str(env_name)
             if val is not None:
@@ -387,7 +397,7 @@ def _apply_env_overrides(opts: Options) -> None:
                     opts.keep_logs = "always"
                 elif val.lower() in ("0", "false", "no"):
                     opts.keep_logs = "session"
-                opts._sources["keep_logs"] = f"env:{env_name}"
+                opts._sources[src_key] = f"env:{env_name}"
         elif kind == "str":
             val = _env_str(env_name)
             if val is not None:
@@ -398,7 +408,7 @@ def _apply_env_overrides(opts: Options) -> None:
                 if attr == "agent" and val not in ("codex", "claude", "opencode"):
                     quit_with(f"PSP_AGENT must be codex, claude, or opencode (got: {val!r})")
                 setattr(opts, attr, val)
-                opts._sources[attr] = f"env:{env_name}"
+                opts._sources[src_key] = f"env:{env_name}"
 
 
 def write_default_config(psp_dir: Path) -> int:
@@ -864,19 +874,24 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             opts.fzf_mode = True
         elif current == "--tmux":
             opts.tmux_mode = True
+            opts._sources["tmux"] = current
         elif current == "--logs":
             opts.logs_mode = True
         elif current == "--no-color":
             opts.no_color = True
+            opts._sources["no_color"] = current
         elif current in ("--quiet", "-q"):
             opts.quiet_mode = True
+            opts._sources["quiet"] = current
         elif current == "--stop-on-error":
             opts.stop_on_error = True
+            opts._sources["stop_on_error"] = current
         elif current == "--cwd":
             opts.cwd_override = arg_value(argv, index, current)
             index += 1
         elif current == "--verbose":
             opts.verbose_mode = True
+            opts._sources["verbose"] = current
         elif current == "--print-plan":
             opts.print_plan = True
         elif current == "--config-show":
@@ -887,6 +902,7 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             opts.dry_run = True
         elif current == "--no-banner":
             opts.no_banner = True
+            opts._sources["no_banner"] = current
         elif current == "--model":
             opts.model = arg_value(argv, index, current)
             opts._sources["model"] = current
@@ -899,14 +915,17 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             index += 1
         elif current in ("--headless", "--no-input"):
             opts.headless_mode = True
+            opts._sources["headless"] = current
         elif current == "--max-turns":
             opts.max_turns = arg_value(argv, index, current)
             opts._sources["max_turns"] = current
             index += 1
         elif current == "--diff":
             opts.diff_mode = True
+            opts._sources["diff_mode"] = current
         elif current == "--clean":
             opts.clean_mode = True
+            opts._sources["clean_mode"] = current
         elif current in ("--last", "-L"):
             opts.last_mode = True
         elif current == "--format":
@@ -1617,9 +1636,9 @@ def launch_tmux(opts: Options, argv: list[str]) -> bool:
 
 
 def _init_colors_for_opts(opts: Options) -> None:
-    """Initialize color system based on --no-color."""
+    """Initialize color system after config/env/CLI resolution."""
     global _COLOR_ENABLED
-    _COLOR_ENABLED = not opts.no_color
+    _COLOR_ENABLED = not opts.no_color and sys.stdout.isatty()
     _init_colors()
 
 
@@ -1729,9 +1748,9 @@ def main(argv: list[str]) -> int:
     if parsed is not None:
         return parsed
 
-    _init_colors_for_opts(opts)
     _apply_env_overrides(opts)
     _load_config_for_opts(opts)
+    _init_colors_for_opts(opts)
 
     if opts.config_show:
         return print_config_show(opts)
