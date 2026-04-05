@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,23 @@ from typing import Any, Callable, NoReturn, TextIO
 
 
 VERSION = "0.3.0-dev"
+
+# ── Signal handling for graceful shutdown ────────────────────────────────────
+_shutdown_requested = False
+_current_proc: subprocess.Popen | None = None
+
+def _handle_signal(signum: int, frame: Any) -> None:
+    global _shutdown_requested
+    _shutdown_requested = True
+    if _current_proc is not None and _current_proc.poll() is None:
+        _current_proc.terminate()
+
+def _register_signal_handlers() -> None:
+    signal.signal(signal.SIGTERM, _handle_signal)
+    try:
+        signal.signal(signal.SIGINT, _handle_signal)
+    except OSError:
+        pass  # SIGINT may be blocked in some contexts (e.g. tmux child)
 
 # ── Terminal colours (disabled when stdout is not a tty or --no-color) ───────
 _COLOR_ENABLED: bool = True
@@ -57,7 +75,7 @@ def c(text: str, *codes: str) -> str:
 
 
 CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
-# Priority: this file < command-line flags
+# Priority: this file < PSP_* env vars < command-line flags
 # All keys are optional; uncomment and edit the ones you want.
 
 # agent       = "codex"       # codex | claude | opencode
@@ -83,6 +101,9 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # max_turns   = ""            # max conversation turns per generation (from codex)
 # diff_mode   = false         # true = show git diff after each generation
 # clean_mode  = false         # true = skip loading config file (from neovim --clean)
+# timeout     = 0             # per-generation wall-clock cap in seconds (0 = no limit)
+# retry       = 0             # retry failed generations this many times with backoff
+# progress    = "auto"        # auto | plain | tty (output verbosity, from docker buildx)
 """
 
 BUILTIN_PLAN_TEMPLATE = """DOMAIN: the current working directory and its contents.
@@ -170,6 +191,11 @@ class Options:
     last_mode: bool = False
     format_output: str = ""
     follow_mode: bool = False
+    timeout_seconds: str = "0"
+    retry_count: str = "0"
+    tac_mode: bool = False
+    stats_mode: bool = False
+    progress_mode: str = "auto"
     _sources: dict = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -251,6 +277,9 @@ _CONFIG_HANDLERS: dict[str, _ConfigHandler] = {
     "max_turns":     lambda o, v, l: _cfg_str(o, v, l, "max_turns", "max_turns"),
     "diff_mode":     lambda o, v, l: _cfg_bool(o, v, l, "diff_mode", "diff_mode"),
     "clean_mode":    lambda o, v, l: _cfg_bool(o, v, l, "clean_mode", "clean_mode"),
+    "timeout":       lambda o, v, l: _cfg_str(o, v, l, "timeout_seconds", "timeout"),
+    "retry":         lambda o, v, l: _cfg_str(o, v, l, "retry_count", "retry"),
+    "progress":      lambda o, v, l: _cfg_str(o, v, l, "progress_mode", "progress"),
 }
 
 
@@ -291,6 +320,85 @@ def load_config(opts: Options) -> None:
 
     label = f"~/.psp/config.toml"
     _load_config_file(opts, cfg, label)
+
+
+# ── Environment variable overrides (PSP_* prefix) ───────────────────────────
+# Pattern from docker (DOCKER_HOST), kubectl (KUBECONFIG), etc.
+# Priority: default < config file < env vars < CLI flags
+
+def _env_bool(name: str) -> str | None:
+    """Read a PSP_* env var and return 'true'/'false' or None."""
+    val = os.environ.get(name)
+    if val is None:
+        return None
+    return "true" if val.lower() in ("1", "true", "yes", "on") else "false"
+
+def _env_str(name: str) -> str | None:
+    """Read a PSP_* env var and return its value or None."""
+    val = os.environ.get(name)
+    return val if val else None
+
+def _apply_env_overrides(opts: Options) -> None:
+    """Apply PSP_* environment variable overrides.
+
+    These sit between config file and CLI flags in the priority chain.
+    Only overrides that are explicitly set in the environment are applied.
+    """
+    env_map = [
+        ("PSP_AGENT",         "agent",         "str"),
+        ("PSP_GENERATIONS",   "generations",   "str"),
+        ("PSP_SLEEP",         "sleep_seconds", "str"),
+        ("PSP_TIME_BUDGET",   "time_budget",   "str"),
+        ("PSP_OUTPUT",        "output_mode",   "str"),
+        ("PSP_AGENT_BIN",     "agent_bin",     "str"),
+        ("PSP_AGENT_ARGS",    "agent_args_text", "str"),
+        ("PSP_YOLO",          "yolo_mode",     "bool"),
+        ("PSP_TMUX",          "tmux_mode",     "bool"),
+        ("PSP_KEEP_LOGS",     "keep_logs",     "keep_logs"),
+        ("PSP_QUIET",         "quiet_mode",    "bool"),
+        ("PSP_STOP_ON_ERROR", "stop_on_error", "bool"),
+        ("PSP_VERBOSE",       "verbose_mode",  "bool"),
+        ("PSP_NO_COLOR",      "no_color",      "bool"),
+        ("PSP_NO_BANNER",     "no_banner",     "bool"),
+        ("PSP_MODEL",         "model",         "str"),
+        ("PSP_HEADLESS",      "headless_mode", "bool"),
+        ("PSP_MAX_TURNS",     "max_turns",     "str"),
+        ("PSP_DIFF",          "diff_mode",     "bool"),
+        ("PSP_CLEAN",         "clean_mode",    "bool"),
+        ("PSP_TIMEOUT",       "timeout_seconds", "str"),
+        ("PSP_RETRY",         "retry_count",   "str"),
+        ("PSP_TAC",           "tac_mode",      "bool"),
+        ("PSP_STATS",         "stats_mode",    "bool"),
+        ("PSP_PROGRESS",      "progress_mode", "str"),
+    ]
+
+    for env_name, attr, kind in env_map:
+        if kind == "bool":
+            val = _env_bool(env_name)
+            if val is not None:
+                setattr(opts, attr, val == "true")
+                opts._sources[attr] = f"env:{env_name}"
+        elif kind == "keep_logs":
+            val = _env_str(env_name)
+            if val is not None:
+                if val in ("always", "session", "never"):
+                    opts.keep_logs = val
+                elif val.lower() in ("1", "true", "yes"):
+                    opts.keep_logs = "always"
+                elif val.lower() in ("0", "false", "no"):
+                    opts.keep_logs = "session"
+                opts._sources["keep_logs"] = f"env:{env_name}"
+        elif kind == "str":
+            val = _env_str(env_name)
+            if val is not None:
+                if attr == "progress_mode" and val not in ("auto", "plain", "tty"):
+                    quit_with(f"PSP_PROGRESS must be auto, plain, or tty (got: {val!r})")
+                if attr == "output_mode" and val not in ("discard", "inherit", "log"):
+                    quit_with(f"PSP_OUTPUT must be discard, inherit, or log (got: {val!r})")
+                if attr == "agent" and val not in ("codex", "claude", "opencode"):
+                    quit_with(f"PSP_AGENT must be codex, claude, or opencode (got: {val!r})")
+                setattr(opts, attr, val)
+                opts._sources[attr] = f"env:{env_name}"
 
 
 def write_default_config(psp_dir: Path) -> int:
@@ -490,9 +598,14 @@ Options:
      --clean                            Skip loading config file (from neovim --clean)
      --last, -L                         Show last run summary
      --format json                      Output in JSON format (for --config-show, --history, --logs, --last)
-     --follow, -f                       Tail the most recent generation log
-      -V, --version                     Print version and exit
-   -h, --help                         Show this help text
+      --follow, -f                       Tail the most recent generation log
+      --timeout N                        Per-generation wall-clock cap in seconds (0 = no limit)
+      --retry N                          Retry failed generations this many times with backoff
+       --tac                              Reverse order for --history/--logs (from fzf)
+       --stats                            Show run statistics and exit
+       --progress auto|plain|tty          Output verbosity (from docker buildx)
+        -V, --version                     Print version and exit
+    -h, --help                         Show this help text
 
 Agent presets (overridable via --agent-args):
   codex     -> codex --full-auto exec -
@@ -582,11 +695,13 @@ def read_history_goals(psp_dir: Path) -> list[str]:
     return goals
 
 
-def print_history(psp_dir: Path, format_output: str = "") -> int:
+def print_history(psp_dir: Path, format_output: str = "", tac: bool = False) -> int:
     goals = read_history_goals(psp_dir)
     if not goals:
         print("No history yet.", file=sys.stderr)
         return 0
+    if tac:
+        goals = list(reversed(goals))
     if format_output == "json":
         sys.stdout.write(json.dumps({"goals": goals, "count": len(goals)}, indent=2) + "\n")
         return 0
@@ -604,11 +719,13 @@ def print_history(psp_dir: Path, format_output: str = "") -> int:
     return 0
 
 
-def print_logs(workdir: Path, format_output: str = "") -> int:
+def print_logs(workdir: Path, format_output: str = "", tac: bool = False) -> int:
     rows = read_log_rows(workdir)
     if not rows:
         print("No generation logs found in current directory.", file=sys.stderr)
         return 0
+    if tac:
+        rows = list(reversed(rows))
     if format_output == "json":
         data = [
             {"path": r.path, "agent": r.agent, "generation": r.generation, "timestamp": r.run_timestamp}
@@ -630,15 +747,17 @@ _psp_completion() {
         --agent|-a)       COMPREPLY=($(compgen -W "codex claude opencode" -- "$cur")); return ;;
         --output|-o)      COMPREPLY=($(compgen -W "discard inherit log" -- "$cur")); return ;;
         --keep-logs)      COMPREPLY=($(compgen -W "always session never" -- "$cur")); return ;;
+        --progress)       COMPREPLY=($(compgen -W "auto plain tty" -- "$cur")); return ;;
         --plan|-p|--agent-bin|--goal|-G|--cwd|--config|--model)
                           COMPREPLY=($(compgen -f -- "$cur")); return ;;
-        --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x|--env|--max-turns|--format) return ;;
+        --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x|--env|--max-turns|--format|--timeout|--retry|--progress) return ;;
     esac
     local flags="--agent --plan --install --init-plan --yolo \\
         --keep-logs --generations --sleep --time-budget --output --agent-bin --agent-args \\
         --goal --model --config --config-show --generate-completion --dry-run --history --continue --fzf \\
         --tmux --logs --no-color --no-banner --quiet --stop-on-error --cwd --verbose --print-plan --env \\
         --headless --no-input --max-turns --diff --clean --last --format --follow \\
+        --timeout --retry --tac --stats --progress \\
         --version --help \\
         -a -p -i -g -s -t -o -x -G -C -q -V -h -L -f"
     if [[ "$cur" == -* ]]; then
@@ -693,6 +812,11 @@ _psp() {
         '(-L --last)'{-L,--last}'[show last run summary]'
         '--format[output format]:format:(json)'
         '(-f --follow)'{-f,--follow}'[tail the most recent generation log]'
+        '--timeout[per-generation wall-clock cap]:seconds'
+        '--retry[retry failed generations]:n'
+        '--tac[reverse order for --history/--logs]'
+        '--stats[show run statistics]'
+        '--progress[output verbosity]:mode:(auto plain tty)'
         '(-V --version)'{-V,--version}'[print version]'
         '(-h --help)'{-h,--help}'[show help]'
         '*:plan file:_files'
@@ -790,6 +914,25 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             index += 1
         elif current in ("--follow", "-f"):
             opts.follow_mode = True
+        elif current == "--timeout":
+            opts.timeout_seconds = arg_value(argv, index, current)
+            opts._sources["timeout"] = current
+            index += 1
+        elif current == "--retry":
+            opts.retry_count = arg_value(argv, index, current)
+            opts._sources["retry"] = current
+            index += 1
+        elif current == "--tac":
+            opts.tac_mode = True
+        elif current == "--stats":
+            opts.stats_mode = True
+        elif current == "--progress":
+            val = arg_value(argv, index, current)
+            if val not in ("auto", "plain", "tty"):
+                quit_with(f"--progress must be auto, plain, or tty (got: {val!r})")
+            opts.progress_mode = val
+            opts._sources["progress"] = current
+            index += 1
         elif current in ("-a", "--agent"):
             opts.agent = arg_value(argv, index, current)
             opts._sources["agent"] = current
@@ -855,9 +998,9 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             set_plan(opts, current)
         index += 1
     if opts.history_mode:
-        return print_history(opts.psp_dir, opts.format_output)
+        return print_history(opts.psp_dir, opts.format_output, opts.tac_mode)
     if opts.logs_mode:
-        return print_logs(Path.cwd(), opts.format_output)
+        return print_logs(Path.cwd(), opts.format_output, opts.tac_mode)
     return None
 
 
@@ -883,6 +1026,9 @@ _CONFIG_SHOW_KEYS = [
     ("max_turns",    "max_turns",       ""),
     ("diff_mode",    "diff_mode",       "false"),
     ("clean_mode",   "clean_mode",      "false"),
+    ("timeout",      "timeout_seconds",  "0"),
+    ("retry",        "retry_count",      "0"),
+    ("progress",     "progress_mode",    "auto"),
 ]
 
 
@@ -1000,10 +1146,16 @@ def validate(opts: Options) -> None:
         quit_with(f"SLEEP_SECONDS must be a non-negative number: {opts.sleep_seconds}")
     if not re.fullmatch(r"[0-9]+", opts.time_budget):
         quit_with(f"TIME_BUDGET must be a non-negative integer (seconds): {opts.time_budget}")
+    if not re.fullmatch(r"[0-9]+", opts.timeout_seconds):
+        quit_with(f"TIMEOUT must be a non-negative integer (seconds): {opts.timeout_seconds}")
+    if not re.fullmatch(r"[0-9]+", opts.retry_count):
+        quit_with(f"RETRY must be a non-negative integer: {opts.retry_count}")
     if not isinstance(opts.dry_run, bool):
         quit_with(f"DRY_RUN must be a boolean: {opts.dry_run}")
     if opts.output_mode not in {"discard", "inherit", "log"}:
         quit_with(f"OUTPUT_MODE must be 'discard', 'inherit', or 'log': {opts.output_mode}")
+    if opts.progress_mode not in {"auto", "plain", "tty"}:
+        quit_with(f"PROGRESS_MODE must be 'auto', 'plain', or 'tty': {opts.progress_mode}")
 
 
 def split_agent_args(agent_args_text: str) -> list[str]:
@@ -1087,6 +1239,7 @@ def run_generation_loop(
     gen_log_paths: list[str] = []
     run_committed: list[str] = []
     run_total = 0
+    run_retries = 0
     if opts.output_mode == "log":
         run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -1096,8 +1249,14 @@ def run_generation_loop(
     gen_w = len(opts.generations)
     sleep_seconds = float(opts.sleep_seconds)
     time_budget = int(opts.time_budget)
+    timeout_per_gen = int(opts.timeout_seconds)
+    max_retries = int(opts.retry_count)
 
     for generation in range(1, generations + 1):
+        if _shutdown_requested:
+            if not opts.quiet_mode:
+                print(f"{c('PSP', CYAN, BOLD)} {SEP} {c('signal received, shutting down', YELLOW)}")
+            return 130
         if time_budget > 0 and int(time.monotonic() - psp_start_time) >= time_budget:
             if not opts.quiet_mode:
                 print(f"{c('PSP', CYAN, BOLD)} {SEP} {c('⏱ time budget reached, stopping', YELLOW)}")
@@ -1118,36 +1277,68 @@ def run_generation_loop(
             print(f"{gen_label('🔄')} {c('running …', YELLOW)}{gen_log_note}")
         gen_started_at = time.monotonic()
 
-        with open(effective_plan, "r", encoding="utf-8") as stdin_handle:
-            output_handle = open_output_target(opts.output_mode, gen_output_path)
-            try:
-                env = dict(os.environ)
-                for env_var in opts.env_vars:
-                    if "=" in env_var:
-                        k, v = env_var.split("=", 1)
-                        env[k] = v
-                proc = subprocess.Popen(
-                    agent_command,
-                    stdin=stdin_handle,
-                    stdout=output_handle if output_handle is not None else sys.stdout,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    env=env,
-                )
+        attempt = 0
+        proc = None
+        while attempt <= max_retries:
+            if attempt > 0:
+                run_retries += 1
+                backoff = min(2 ** (attempt - 1), 30)
+                if not opts.quiet_mode:
+                    print(f"{gen_label('🔁')} {c(f'retry {attempt}/{max_retries}, waiting {backoff}s', YELLOW)}")
                 try:
-                    proc.wait()
+                    time.sleep(backoff)
                 except KeyboardInterrupt:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
                     if not opts.quiet_mode:
                         print(f"\n{gen_label('✗')} {c('interrupted', RED)}", flush=True)
                     return 130
-            finally:
-                if output_handle is not None:
-                    output_handle.close()
+
+            with open(effective_plan, "r", encoding="utf-8") as stdin_handle:
+                output_handle = open_output_target(opts.output_mode, gen_output_path)
+                try:
+                    env = dict(os.environ)
+                    for env_var in opts.env_vars:
+                        if "=" in env_var:
+                            k, v = env_var.split("=", 1)
+                            env[k] = v
+                    global _current_proc
+                    proc = subprocess.Popen(
+                        agent_command,
+                        stdin=stdin_handle,
+                        stdout=output_handle if output_handle is not None else sys.stdout,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        env=env,
+                    )
+                    _current_proc = proc
+                    try:
+                        if timeout_per_gen > 0:
+                            try:
+                                proc.wait(timeout=timeout_per_gen)
+                            except subprocess.TimeoutExpired:
+                                proc.kill()
+                                proc.wait()
+                                if not opts.quiet_mode:
+                                    print(f"{gen_label('⏱')} {c(f'timeout after {timeout_per_gen}s', RED)}")
+                        else:
+                            proc.wait()
+                    except KeyboardInterrupt:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                        if not opts.quiet_mode:
+                            print(f"\n{gen_label('✗')} {c('interrupted', RED)}", flush=True)
+                        return 130
+                    finally:
+                        _current_proc = None
+                finally:
+                    if output_handle is not None:
+                        output_handle.close()
+
+            if proc.returncode == 0 or attempt >= max_retries:
+                break
+            attempt += 1
 
         if proc.returncode != 0:
             if opts.stop_on_error:
@@ -1155,7 +1346,8 @@ def run_generation_loop(
                     print(f"{gen_label('✗')} {c(f'agent failed (exit {proc.returncode}), stopping', RED)}")
                 return proc.returncode
             if not opts.quiet_mode:
-                print(f"{gen_label('✗')} {c(f'agent failed (exit {proc.returncode}), continuing', RED)}")
+                retry_note = f" (retried {attempt}x)" if attempt > 0 else ""
+                print(f"{gen_label('✗')} {c(f'agent failed (exit {proc.returncode}), continuing{retry_note}', RED)}")
 
         if opts.keep_logs == "never" and gen_output_path:
             Path(gen_output_path).unlink(missing_ok=True)
@@ -1345,6 +1537,38 @@ def print_last_run(opts: Options) -> int:
     return 0
 
 
+def print_stats(opts: Options) -> int:
+    """Show run statistics from history and logs."""
+    goals = read_history_goals(opts.psp_dir)
+    rows = read_log_rows(Path.cwd())
+    if not goals and not rows:
+        print("No runs found.", file=sys.stderr)
+        return 1
+
+    if opts.format_output == "json":
+        data: dict[str, Any] = {
+            "total_goals": len(goals),
+            "total_logs": len(rows),
+        }
+        agent_counts: dict[str, int] = {}
+        for r in rows:
+            agent_counts[r.agent] = agent_counts.get(r.agent, 0) + 1
+        data["agents"] = agent_counts
+        sys.stdout.write(json.dumps(data, indent=2) + "\n")
+        return 0
+
+    print(f"{c('Total goals:', DIM)} {len(goals)}")
+    print(f"{c('Total logs:', DIM)} {len(rows)}")
+    agent_counts: dict[str, int] = {}
+    for r in rows:
+        agent_counts[r.agent] = agent_counts.get(r.agent, 0) + 1
+    if agent_counts:
+        print(f"{c('By agent:', DIM)}")
+        for agent, count in sorted(agent_counts.items(), key=lambda x: -x[1]):
+            print(f"  {c(agent, YELLOW)}: {count}")
+    return 0
+
+
 def follow_current_log(opts: Options) -> int:
     """Tail the most recent generation log file."""
     rows = read_log_rows(Path.cwd())
@@ -1392,52 +1616,128 @@ def launch_tmux(opts: Options, argv: list[str]) -> bool:
     return True  # unreachable
 
 
-def main(argv: list[str]) -> int:
-    sys.stdout.reconfigure(line_buffering=True)
-    script_path = resolve_path(Path(__file__))
-    opts = Options(script_path=script_path, script_dir=script_path.parent)
-
-    # Parse args first to know --no-color and --config before loading config
-    parsed = parse_args(opts, argv)
-    if parsed is not None:
-        return parsed
-
-    # Initialize color system based on --no-color
+def _init_colors_for_opts(opts: Options) -> None:
+    """Initialize color system based on --no-color."""
     global _COLOR_ENABLED
     _COLOR_ENABLED = not opts.no_color
     _init_colors()
 
-    # Load config (supports --config PATH override, --clean skips entirely)
-    if not opts.clean_mode:
-        if opts.config_path:
-            cfg = Path(opts.config_path)
-            if not cfg.is_file():
-                quit_with(f"Config file not found: {opts.config_path}")
-            _load_config_file(opts, cfg, opts.config_path)
-        else:
-            load_config(opts)
+
+def _load_config_for_opts(opts: Options) -> None:
+    """Load config file(s) unless --clean is set."""
+    if opts.clean_mode:
+        return
+    if opts.config_path:
+        cfg = Path(opts.config_path)
+        if not cfg.is_file():
+            quit_with(f"Config file not found: {opts.config_path}")
+        _load_config_file(opts, cfg, opts.config_path)
+    else:
+        load_config(opts)
+
+
+def _resolve_cwd(opts: Options) -> None:
+    """Change working directory if --cwd was given."""
+    if not opts.cwd_override:
+        return
+    cwd_path = Path(opts.cwd_override).resolve()
+    if not cwd_path.is_dir():
+        quit_with(f"Directory not found: {opts.cwd_override}")
+    os.chdir(cwd_path)
+
+
+def _build_agent_command(opts: Options) -> list[str]:
+    """Build the agent command with all arguments."""
+    agent_args = split_agent_args(opts.agent_args_text)
+    if opts.max_turns:
+        agent_args.extend(["--max-turns", opts.max_turns])
+    return [opts.agent_bin, *agent_args]
+
+
+def _print_header(
+    opts: Options,
+    plan_display: str,
+    goal_note: str,
+    nm_w: int,
+) -> int:
+    """Print the header banner and return its display width."""
+    yolo_note = (f" {SEP} {c('⚠ yolo', RED, BOLD)}") if opts.yolo_mode else ""
+    label = c(f"{SEP} PSP {'STEP':<{nm_w}} {SEP} ", CYAN)
+    body = f"{c('plan:', DIM)} {plan_display}{goal_note} {SEP} {c('agent:', DIM)} {c(opts.agent, YELLOW)} {SEP} {c('gen:', DIM)} {opts.generations}{yolo_note} "
+    header = f"{label}{body}{SEP}"
+    print(header)
+    return len(re.sub(r"\033\[[0-9;]*m", "", header))
+
+
+def _build_goal_note(opts: Options) -> str:
+    """Build the goal display snippet for the header."""
+    if not opts.goal_text:
+        return ""
+    flat = " ".join(opts.goal_text.split())
+    g = flat[:33] + (" …" if len(flat) > 33 else "")
+    return f" {SEP} {c('goal:', DIM)} {c(g, CYAN)}"
+
+
+def _run_dry_run(
+    opts: Options,
+    agent_command: list[str],
+    header_width: int,
+) -> int:
+    """Print the resolved command and exit."""
+    plan_display = opts.plan_path if opts.plan_explicit else "(builtin)"
+    if not opts.no_banner:
+        _print_header(opts, plan_display, _build_goal_note(opts), max(len(opts.generations) * 2 + 1, len("STEP")))
+    command_text = "".join(f" {bash_quote(part)}" for part in agent_command)
+    if not opts.plan_explicit:
+        print(f"PSP DRY RUN |{command_text} < <(builtin_plan_template {bash_quote(opts.goal_text)})")
+    else:
+        print(f"PSP DRY RUN |{command_text} < {bash_quote(opts.plan_path)}")
+    return 0
+
+
+def _run_loop(
+    opts: Options,
+    agent_command: list[str],
+    header_width: int,
+) -> int:
+    """Prepare the plan and run the generation loop."""
+    if shutil.which(opts.agent_bin) is None:
+        warn_if_no_agent()
+        quit_with(f"Required command not found on PATH: {opts.agent_bin}")
+
+    if not os.path.isabs(opts.plan_path):
+        opts.plan_path = f"{Path.cwd()}/{opts.plan_path}"
+
+    effective_plan, tmp_plan = prepare_effective_plan(opts)
+    plan_display = os.path.basename(tmp_plan) if tmp_plan else opts.plan_path
+    if not opts.no_banner:
+        _print_header(opts, plan_display, _build_goal_note(opts), max(len(opts.generations) * 2 + 1, len("STEP")))
+    try:
+        return run_generation_loop(opts, agent_command, effective_plan, plan_display, header_width)
+    finally:
+        if tmp_plan:
+            Path(tmp_plan).unlink(missing_ok=True)
+
+
+def main(argv: list[str]) -> int:
+    sys.stdout.reconfigure(line_buffering=True)
+    _register_signal_handlers()
+    script_path = resolve_path(Path(__file__))
+    opts = Options(script_path=script_path, script_dir=script_path.parent)
+
+    parsed = parse_args(opts, argv)
+    if parsed is not None:
+        return parsed
+
+    _init_colors_for_opts(opts)
+    _apply_env_overrides(opts)
+    _load_config_for_opts(opts)
 
     if opts.config_show:
         return print_config_show(opts)
 
     if opts.print_plan:
-        if not opts.goal_text:
-            if opts.plan_explicit:
-                plan_text = Path(opts.plan_path).read_text(encoding="utf-8")
-                sys.stdout.write(plan_text)
-                return 0
-            # Need to read goal from stdin for builtin plan
-            read_goal(opts)
-            if not opts.goal_text:
-                quit_with("--print-plan requires a goal (--goal or stdin) or an explicit plan (--plan)")
-        effective_plan, tmp_plan = prepare_effective_plan(opts)
-        try:
-            plan_text = Path(effective_plan).read_text(encoding="utf-8")
-            sys.stdout.write(plan_text)
-            return 0
-        finally:
-            if tmp_plan:
-                Path(tmp_plan).unlink(missing_ok=True)
+        return _handle_print_plan(opts)
 
     if opts.install_mode:
         install_self(opts)
@@ -1459,24 +1759,14 @@ def main(argv: list[str]) -> int:
     if opts.follow_mode:
         return follow_current_log(opts)
 
-    if opts.cwd_override:
-        cwd_path = Path(opts.cwd_override).resolve()
-        if not cwd_path.is_dir():
-            quit_with(f"Directory not found: {opts.cwd_override}")
-        os.chdir(cwd_path)
+    if opts.stats_mode:
+        return print_stats(opts)
 
+    _resolve_cwd(opts)
     read_goal(opts)
 
     if opts.init_plan_path:
-        init_plan_path = Path(opts.init_plan_path)
-        if init_plan_path.exists():
-            quit_with(f"Refusing to overwrite existing file: {opts.init_plan_path}")
-        init_plan_path.write_text(
-            builtin_plan_template("[[describe the improvement you want here]]"),
-            encoding="utf-8",
-        )
-        print(f"Wrote starter plan to {opts.init_plan_path}")
-        return 0
+        return _handle_init_plan(opts)
 
     if opts.tmux_mode and not os.environ.get("PSP_TMUX_CHILD"):
         if launch_tmux(opts, argv):
@@ -1485,63 +1775,47 @@ def main(argv: list[str]) -> int:
     apply_agent_presets(opts)
     validate(opts)
 
-    agent_args = split_agent_args(opts.agent_args_text)
-    if opts.max_turns:
-        if opts.agent == "codex":
-            agent_args.extend(["--max-turns", opts.max_turns])
-        elif opts.agent == "opencode":
-            agent_args.extend(["--max-turns", opts.max_turns])
-        elif opts.agent == "claude":
-            agent_args.extend(["--max-turns", opts.max_turns])
-    agent_command = [opts.agent_bin, *agent_args]
-
-    gen_w = len(opts.generations)
-    nm_w = max(gen_w * 2 + 1, len("STEP"))
-    yolo_note = (f" {SEP} {c('⚠ yolo', RED, BOLD)}") if opts.yolo_mode else ""
-    goal_note = ""
-    if opts.goal_text:
-        flat = " ".join(opts.goal_text.split())
-        g = flat[:33] + (" …" if len(flat) > 33 else "")
-        goal_note = f" {SEP} {c('goal:', DIM)} {c(g, CYAN)}"
-
-    header_width = 0
-
-    def print_header(plan_display: str) -> None:
-        nonlocal header_width
-        label = c(f"{SEP} PSP {'STEP':<{nm_w}} {SEP} ", CYAN)
-        body  = f"{c('plan:', DIM)} {plan_display}{goal_note} {SEP} {c('agent:', DIM)} {c(opts.agent, YELLOW)} {SEP} {c('gen:', DIM)} {opts.generations}{yolo_note} "
-        header = f"{label}{body}{SEP}"
-        print(header)
-        header_width = len(re.sub(r"\033\[[0-9;]*m", "", header))
-        print(SEP + LINE * (header_width - 2) + SEP)
+    agent_command = _build_agent_command(opts)
+    nm_w = max(len(opts.generations) * 2 + 1, len("STEP"))
+    header_width = nm_w * 2 + 1
 
     if opts.dry_run:
-        plan_display = opts.plan_path if opts.plan_explicit else "(builtin)"
-        if not opts.no_banner:
-            print_header(plan_display)
-        command_text = "".join(f" {bash_quote(part)}" for part in agent_command)
-        if not opts.plan_explicit:
-            print(f"PSP DRY RUN |{command_text} < <(builtin_plan_template {bash_quote(opts.goal_text)})")
-        else:
-            print(f"PSP DRY RUN |{command_text} < {bash_quote(opts.plan_path)}")
-        return 0
+        return _run_dry_run(opts, agent_command, header_width)
 
-    if shutil.which(opts.agent_bin) is None:
-        warn_if_no_agent()
-        quit_with(f"Required command not found on PATH: {opts.agent_bin}")
+    return _run_loop(opts, agent_command, header_width)
 
-    if not os.path.isabs(opts.plan_path):
-        opts.plan_path = f"{Path.cwd()}/{opts.plan_path}"
 
+def _handle_print_plan(opts: Options) -> int:
+    """Handle --print-plan: print the effective plan and exit."""
+    if not opts.goal_text:
+        if opts.plan_explicit:
+            plan_text = Path(opts.plan_path).read_text(encoding="utf-8")
+            sys.stdout.write(plan_text)
+            return 0
+        read_goal(opts)
+        if not opts.goal_text:
+            quit_with("--print-plan requires a goal (--goal or stdin) or an explicit plan (--plan)")
     effective_plan, tmp_plan = prepare_effective_plan(opts)
-    plan_display = os.path.basename(tmp_plan) if tmp_plan else opts.plan_path
-    if not opts.no_banner:
-        print_header(plan_display)
     try:
-        return run_generation_loop(opts, agent_command, effective_plan, plan_display, header_width)
+        plan_text = Path(effective_plan).read_text(encoding="utf-8")
+        sys.stdout.write(plan_text)
+        return 0
     finally:
         if tmp_plan:
             Path(tmp_plan).unlink(missing_ok=True)
+
+
+def _handle_init_plan(opts: Options) -> int:
+    """Handle --init-plan: write a starter plan file and exit."""
+    init_plan_path = Path(opts.init_plan_path)
+    if init_plan_path.exists():
+        quit_with(f"Refusing to overwrite existing file: {opts.init_plan_path}")
+    init_plan_path.write_text(
+        builtin_plan_template("[[describe the improvement you want here]]"),
+        encoding="utf-8",
+    )
+    print(f"Wrote starter plan to {opts.init_plan_path}")
+    return 0
 
 
 if __name__ == "__main__":

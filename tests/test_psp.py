@@ -872,6 +872,284 @@ class PSPPortTests(unittest.TestCase):
         module.parse_args(opts, ["--env", "FOO=bar", "--env", "BAZ=qux", "--dry-run"])
         self.assertEqual(opts.env_vars, ["FOO=bar", "BAZ=qux"])
 
+    def test_timeout_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--timeout", "60", "--dry-run"], stdin="test goal\n")
+
+    def test_retry_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--retry", "3", "--dry-run"], stdin="test goal\n")
+
+    def test_tac_history_reverses_goals(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            psp_dir = Path(tmpdir)
+            (psp_dir / "history").write_text(
+                "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\talpha\n"
+                "2026-03-31T09:05:00Z\tcodex\t/tmp/repo\tg=2\tbeta\n",
+                encoding="utf-8",
+            )
+            with mock.patch("sys.stdout") as mock_stdout:
+                mock_stdout.isatty.return_value = False
+                exit_code = module.print_history(psp_dir, tac=True)
+            self.assertEqual(exit_code, 0)
+            mock_stdout.write.assert_called_once_with("beta\nalpha\n")
+
+    def test_tac_logs_reverses_rows(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+            (workdir / "psp_codex_20260331T090500Z_gen02.log").write_text("two\n", encoding="utf-8")
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--logs", "--tac"],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env=None,
+        )
+        lines = result["stdout"].splitlines()
+        self.assertIn("gen02", lines[0])
+        self.assertIn("gen01", lines[1])
+
+    def test_stats_mode_with_no_runs(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--stats"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("No runs found", result["stderr"])
+
+    def test_stats_dry_run_matches_shell(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            history_dir = home / ".psp"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            (history_dir / "history").write_text(
+                "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\talpha\n",
+                encoding="utf-8",
+            )
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--stats"],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("Total goals", result["stdout"])
+
+    def test_stats_format_json(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            history_dir = home / ".psp"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            (history_dir / "history").write_text(
+                "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\talpha\n",
+                encoding="utf-8",
+            )
+            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--stats", "--format", "json"],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        import json
+        data = json.loads(result["stdout"])
+        self.assertEqual(data["total_goals"], 1)
+        self.assertEqual(data["total_logs"], 1)
+        self.assertEqual(data["agents"], {"codex": 1})
+
+    def test_timeout_validation_rejects_negative(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--timeout", "-1", "--dry-run"],
+            stdin="test goal\n",
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("TIMEOUT", result["stderr"])
+
+    def test_retry_validation_rejects_negative(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--retry", "-1", "--dry-run"],
+            stdin="test goal\n",
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("RETRY", result["stderr"])
+
+    def test_config_show_includes_timeout_and_retry(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--config-show"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("timeout", result["stdout"])
+        self.assertIn("retry", result["stdout"])
+
+    def test_new_bool_types_tac_and_stats(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        self.assertIsInstance(opts.tac_mode, bool)
+        self.assertIsInstance(opts.stats_mode, bool)
+        self.assertIsInstance(opts.progress_mode, str)
+        self.assertEqual(opts.progress_mode, "auto")
+
+    def test_progress_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--progress", "plain", "--dry-run"], stdin="test goal\n")
+
+    def test_progress_invalid_exits_with_error(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--progress", "invalid", "--dry-run"],
+            stdin="test goal\n",
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("must be auto, plain, or tty", result["stderr"])
+
+    def test_config_show_includes_progress(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--config-show"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("progress", result["stdout"])
+
+    def test_env_psp_agent_override(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        with mock.patch.dict(module.os.environ, {"PSP_AGENT": "claude"}, clear=True):
+            module._apply_env_overrides(opts)
+        self.assertEqual(opts.agent, "claude")
+        self.assertEqual(opts._sources.get("agent"), "env:PSP_AGENT")
+
+    def test_env_psp_quiet_override(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        with mock.patch.dict(module.os.environ, {"PSP_QUIET": "true"}, clear=True):
+            module._apply_env_overrides(opts)
+        self.assertTrue(opts.quiet_mode)
+
+    def test_env_psp_quiet_override_false(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        opts.quiet_mode = True  # set via config
+        with mock.patch.dict(module.os.environ, {"PSP_QUIET": "0"}, clear=True):
+            module._apply_env_overrides(opts)
+        self.assertFalse(opts.quiet_mode)
+
+    def test_env_psp_progress_override(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        with mock.patch.dict(module.os.environ, {"PSP_PROGRESS": "plain"}, clear=True):
+            module._apply_env_overrides(opts)
+        self.assertEqual(opts.progress_mode, "plain")
+
+    def test_env_psp_progress_invalid_exits(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        with mock.patch.dict(module.os.environ, {"PSP_PROGRESS": "invalid"}, clear=True):
+            with self.assertRaises(SystemExit):
+                module._apply_env_overrides(opts)
+
+    def test_env_psp_agent_invalid_exits(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        with mock.patch.dict(module.os.environ, {"PSP_AGENT": "invalid"}, clear=True):
+            with self.assertRaises(SystemExit):
+                module._apply_env_overrides(opts)
+
+    def test_env_psp_output_invalid_exits(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        with mock.patch.dict(module.os.environ, {"PSP_OUTPUT": "invalid"}, clear=True):
+            with self.assertRaises(SystemExit):
+                module._apply_env_overrides(opts)
+
+    def test_env_psp_multiple_overrides(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        env = {
+            "PSP_AGENT": "opencode",
+            "PSP_GENERATIONS": "5",
+            "PSP_QUIET": "1",
+            "PSP_NO_COLOR": "yes",
+        }
+        with mock.patch.dict(module.os.environ, env, clear=True):
+            module._apply_env_overrides(opts)
+        self.assertEqual(opts.agent, "opencode")
+        self.assertEqual(opts.generations, "5")
+        self.assertTrue(opts.quiet_mode)
+        self.assertTrue(opts.no_color)
+
+    def test_env_psp_keep_logs_override(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        with mock.patch.dict(module.os.environ, {"PSP_KEEP_LOGS": "never"}, clear=True):
+            module._apply_env_overrides(opts)
+        self.assertEqual(opts.keep_logs, "never")
+
+    def test_env_psp_keep_logs_bool_override(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        with mock.patch.dict(module.os.environ, {"PSP_KEEP_LOGS": "true"}, clear=True):
+            module._apply_env_overrides(opts)
+        self.assertEqual(opts.keep_logs, "always")
+
+    def test_signal_handler_registered(self) -> None:
+        module = load_python_psp_module()
+        # Verify signal handlers are set for SIGTERM
+        import signal as sig
+        module._register_signal_handlers()
+        handler = sig.getsignal(sig.SIGTERM)
+        self.assertEqual(handler, module._handle_signal)
+
+    def test_shutdown_flag_initially_false(self) -> None:
+        module = load_python_psp_module()
+        module._shutdown_requested = False
+        self.assertFalse(module._shutdown_requested)
+
+    def test_shutdown_flag_set_by_handler(self) -> None:
+        module = load_python_psp_module()
+        module._shutdown_requested = False
+        module._handle_signal(15, None)  # SIGTERM
+        self.assertTrue(module._shutdown_requested)
+
+    def test_config_show_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--config-show", "--dry-run"], stdin="test goal\n")
+
 
 if __name__ == "__main__":
     unittest.main()
