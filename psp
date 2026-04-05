@@ -221,10 +221,28 @@ def builtin_plan_template(goal: str, plan_file: str = "") -> str:
     return BUILTIN_PLAN_TEMPLATE.format(goal=goal, plan_file=plan_file or "plan.tmp.*")
 
 
+def _source_is_cli(label: str | None) -> bool:
+    return bool(label) and label.startswith("-")
+
+
+def _can_apply_config_value(opts: Options, src_key: str) -> bool:
+    source = opts._sources.get(src_key)
+    if source is None:
+        return True
+    return not (_source_is_cli(source) or str(source).startswith("env:"))
+
+
+def _can_apply_env_value(opts: Options, src_key: str) -> bool:
+    source = opts._sources.get(src_key)
+    if source is None:
+        return True
+    return not _source_is_cli(source)
+
+
 
 def _cfg_str(opts: Options, value: str, label: str, attr: str, src_key: str) -> None:
     """Set a string config attribute."""
-    if src_key in opts._sources:
+    if not _can_apply_config_value(opts, src_key):
         return
     setattr(opts, attr, value)
     opts._sources[src_key] = label
@@ -232,7 +250,7 @@ def _cfg_str(opts: Options, value: str, label: str, attr: str, src_key: str) -> 
 
 def _cfg_bool(opts: Options, value: str, label: str, attr: str, src_key: str) -> None:
     """Set a bool config attribute when value is 'true'."""
-    if src_key in opts._sources:
+    if not _can_apply_config_value(opts, src_key):
         return
     if value == "true":
         setattr(opts, attr, True)
@@ -241,7 +259,7 @@ def _cfg_bool(opts: Options, value: str, label: str, attr: str, src_key: str) ->
 
 def _cfg_keep_logs(opts: Options, value: str, label: str, _attr: str, src_key: str) -> None:
     """Handle keep_logs with legacy bool compatibility."""
-    if src_key in opts._sources:
+    if not _can_apply_config_value(opts, src_key):
         return
     if value in ("always", "session", "never"):
         opts.keep_logs = value
@@ -255,7 +273,7 @@ def _cfg_keep_logs(opts: Options, value: str, label: str, _attr: str, src_key: s
 
 
 def _cfg_tmux(opts: Options, value: str, label: str) -> None:
-    if "tmux" in opts._sources:
+    if not _can_apply_config_value(opts, "tmux"):
         return
     opts.tmux_mode = value == "true"
     opts._sources["tmux"] = label
@@ -381,7 +399,7 @@ def _apply_env_overrides(opts: Options) -> None:
     ]
 
     for env_name, attr, src_key, kind in env_map:
-        if src_key in opts._sources:
+        if not _can_apply_env_value(opts, src_key):
             continue
         if kind == "bool":
             val = _env_bool(env_name)
@@ -1081,7 +1099,7 @@ def print_config_show(opts: Options) -> int:
         print(c(f"  config file: {config_file_label}", DIM))
     else:
         print(c(f"  config file: {config_file_label} (not found)", DIM))
-    print(c(f"  priority: default < {config_file_label} < CLI flags", DIM))
+    print(c(f"  priority: default < {config_file_label} < PSP_* env vars < CLI flags", DIM))
     return 0
 
 
@@ -1642,6 +1660,13 @@ def _init_colors_for_opts(opts: Options) -> None:
     _init_colors()
 
 
+def _resolve_runtime_options(opts: Options) -> None:
+    """Apply config, env, and presentation settings in precedence order."""
+    _load_config_for_opts(opts)
+    _apply_env_overrides(opts)
+    _init_colors_for_opts(opts)
+
+
 def _load_config_for_opts(opts: Options) -> None:
     """Load config file(s) unless --clean is set."""
     if opts.clean_mode:
@@ -1738,6 +1763,27 @@ def _run_loop(
             Path(tmp_plan).unlink(missing_ok=True)
 
 
+def _handle_non_run_modes(opts: Options, argv: list[str]) -> int | None:
+    """Handle modes that return before generation execution begins."""
+    if opts.config_show:
+        return print_config_show(opts)
+    if opts.print_plan:
+        return _handle_print_plan(opts)
+    if opts.install_mode:
+        install_self(opts)
+        return 0
+    if opts.fzf_mode:
+        pick_goal_with_fzf(opts.script_path, [a for a in argv if a != "--fzf"])
+        return 0
+    if opts.last_mode:
+        return print_last_run(opts)
+    if opts.follow_mode:
+        return follow_current_log(opts)
+    if opts.stats_mode:
+        return print_stats(opts)
+    return None
+
+
 def main(argv: list[str]) -> int:
     sys.stdout.reconfigure(line_buffering=True)
     _register_signal_handlers()
@@ -1748,38 +1794,17 @@ def main(argv: list[str]) -> int:
     if parsed is not None:
         return parsed
 
-    _apply_env_overrides(opts)
-    _load_config_for_opts(opts)
-    _init_colors_for_opts(opts)
+    _resolve_runtime_options(opts)
 
-    if opts.config_show:
-        return print_config_show(opts)
-
-    if opts.print_plan:
-        return _handle_print_plan(opts)
-
-    if opts.install_mode:
-        install_self(opts)
-        return 0
-
-    if opts.fzf_mode:
-        pick_goal_with_fzf(opts.script_path, [a for a in argv if a != "--fzf"])
-        return 0
+    early_result = _handle_non_run_modes(opts, argv)
+    if early_result is not None:
+        return early_result
 
     if opts.continue_mode and not opts.goal_text:
         goals = read_history_goals(opts.psp_dir)
         if not goals:
             quit_with("No history to continue from")
         opts.goal_text = goals[-1]
-
-    if opts.last_mode:
-        return print_last_run(opts)
-
-    if opts.follow_mode:
-        return follow_current_log(opts)
-
-    if opts.stats_mode:
-        return print_stats(opts)
 
     _resolve_cwd(opts)
     read_goal(opts)

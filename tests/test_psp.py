@@ -600,6 +600,7 @@ class PSPPortTests(unittest.TestCase):
         self.assertIn("quiet", result["stdout"])
         self.assertIn("stop_on_error", result["stdout"])
         self.assertIn("verbose", result["stdout"])
+        self.assertIn("PSP_* env vars < CLI flags", result["stdout"])
 
     def test_cli_configurable_options_override_config_file(self) -> None:
         def fixture(workdir: Path, home: Path) -> None:

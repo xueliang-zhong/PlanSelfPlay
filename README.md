@@ -28,8 +28,12 @@ psp --fzf                                   # same as above
 psp --init-plan plan.txt                    # write a starter plan file
 psp -p plan.txt -g 20                       # run a custom plan for 20 generations
 psp --config-show                           # audit resolved config and sources
+PSP_AGENT=claude psp --config-show          # inspect env/config/CLI precedence
 psp --help                                  # all options
 ```
+
+Resolution order is explicit and inspectable: defaults < `~/.psp/config.toml` < `PSP_*` env vars < CLI flags.
+Color output is TTY-aware by default, and `--no-color` forces plain output when you need deterministic logs or pipes.
 
 No Python? **`psp-nano`** is a self-contained bash script with the same core loop:
 

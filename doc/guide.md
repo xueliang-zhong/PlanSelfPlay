@@ -116,6 +116,11 @@ Usage: psp [options] [plan-path]
 | `--last, -L` | Show last run summary |
 | `--format json` | Output in JSON format (for `--config-show`, `--history`, `--logs`, `--last`) |
 | `--follow, -f` | Tail the most recent generation log |
+| `--timeout SECONDS` | Per-generation timeout; 0 = no limit |
+| `--retry N` | Retry failed generations with backoff |
+| `--stats` | Print aggregate run statistics |
+| `--tac` | Reverse ordering for `--history` / `--logs` output |
+| `--progress auto\|plain\|tty` | Output verbosity hint for compatible agents |
 | `-V, --version` | Print version and exit |
 | `-h, --help` | Show help |
 
@@ -141,7 +146,7 @@ Bootstrap once, then edit:
 psp --install         # one-shot: install + PATH + config
 ```
 
-All keys are optional. Priority: `config.toml` < CLI flags.
+All keys are optional. Priority: `config.toml` < `PSP_*` env vars < CLI flags.
 
 ```toml
 # ~/.psp/config.toml
@@ -154,7 +159,26 @@ generations = 6
 # agent_args  = ""
 # yolo        = false
 # keep_logs   = "always"   # always | session | never  (always = default)
+# quiet       = false
+# stop_on_error = false
+# verbose     = false
+# no_color    = false
+# no_banner   = false
+# model       = ""
+# headless    = false
+# max_turns   = ""
+# diff_mode   = false
+# timeout     = 0
+# retry       = 0
+# progress    = "auto"     # auto | plain | tty
 ```
+
+`psp --config-show` prints both the resolved values and the source for each one,
+so it is the fastest way to debug precedence issues.
+
+Color output follows terminal capability by default: if stdout is not a TTY,
+PSP falls back to plain text automatically. Use `--no-color` to force plain
+output even in an interactive terminal.
 
 ## Run history
 
