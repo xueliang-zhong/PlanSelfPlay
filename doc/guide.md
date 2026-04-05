@@ -109,6 +109,13 @@ Usage: psp [options] [plan-path]
 | `--config PATH` | Use an alternative config file instead of ~/.psp/config.toml |
 | `--no-banner` | Suppress the header line |
 | `--env KEY=VALUE` | Pass an environment variable to the agent (repeatable) |
+| `--headless` | Suppress all interactive prompts (CI/automation) |
+| `--max-turns N` | Max conversation turns per generation |
+| `--diff` | Show git diff after each generation |
+| `--clean` | Skip loading config file (from neovim `--clean`) |
+| `--last, -L` | Show last run summary |
+| `--format json` | Output in JSON format (for `--config-show`, `--history`, `--logs`, `--last`) |
+| `--follow, -f` | Tail the most recent generation log |
 | `-V, --version` | Print version and exit |
 | `-h, --help` | Show help |
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -12,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NoReturn, TextIO
+from typing import Any, Callable, NoReturn, TextIO
 
 
 VERSION = "0.3.0-dev"
@@ -51,7 +52,8 @@ def c(text: str, *codes: str) -> str:
     """Wrap text in ANSI codes (no-op when colors disabled)."""
     if not _COLOR_ENABLED:
         return text
-    return "".join(_color(code) for code in codes) + _color("0") + text
+    opens = "".join(_color(code) for code in codes)
+    return f"{opens}{text}{_color('0')}"
 
 
 CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
@@ -77,6 +79,10 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # no_color    = false         # true = disable ANSI color output
 # no_banner   = false         # true = suppress the header line
 # model       = ""            # LLM model to use (e.g. gpt-4o, claude-sonnet-4-20250514)
+# headless    = false         # true = suppress all interactive prompts (from neovim/opencode)
+# max_turns   = ""            # max conversation turns per generation (from codex)
+# diff_mode   = false         # true = show git diff after each generation
+# clean_mode  = false         # true = skip loading config file (from neovim --clean)
 """
 
 BUILTIN_PLAN_TEMPLATE = """DOMAIN: the current working directory and its contents.
@@ -157,6 +163,13 @@ class Options:
     config_path: str = ""
     no_banner: bool = False
     env_vars: list[str] = field(default_factory=list)
+    headless_mode: bool = False
+    max_turns: str = ""
+    diff_mode: bool = False
+    clean_mode: bool = False
+    last_mode: bool = False
+    format_output: str = ""
+    follow_mode: bool = False
     _sources: dict = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -183,6 +196,73 @@ def builtin_plan_template(goal: str, plan_file: str = "") -> str:
 
 
 
+def _cfg_str(opts: Options, value: str, label: str, attr: str, src_key: str) -> None:
+    """Set a string config attribute."""
+    setattr(opts, attr, value)
+    opts._sources[src_key] = label
+
+
+def _cfg_bool(opts: Options, value: str, label: str, attr: str, src_key: str) -> None:
+    """Set a bool config attribute when value is 'true'."""
+    if value == "true":
+        setattr(opts, attr, True)
+        opts._sources[src_key] = label
+
+
+def _cfg_keep_logs(opts: Options, value: str, label: str, _attr: str, src_key: str) -> None:
+    """Handle keep_logs with legacy bool compatibility."""
+    if value in ("always", "session", "never"):
+        opts.keep_logs = value
+        opts._sources[src_key] = label
+    elif value == "true":
+        opts.keep_logs = "always"
+        opts._sources[src_key] = label
+    elif value == "false":
+        opts.keep_logs = "session"
+        opts._sources[src_key] = label
+
+
+def _cfg_tmux(opts: Options, value: str, label: str) -> None:
+    opts.tmux_mode = value == "true"
+    opts._sources["tmux"] = label
+
+
+_ConfigHandler = Callable[[Options, str, str], Any]
+
+_CONFIG_HANDLERS: dict[str, _ConfigHandler] = {
+    "agent":         lambda o, v, l: _cfg_str(o, v, l, "agent", "agent"),
+    "generations":   lambda o, v, l: _cfg_str(o, v, l, "generations", "generations"),
+    "sleep":         lambda o, v, l: _cfg_str(o, v, l, "sleep_seconds", "sleep"),
+    "time_budget":   lambda o, v, l: _cfg_str(o, v, l, "time_budget", "time_budget"),
+    "output":        lambda o, v, l: _cfg_str(o, v, l, "output_mode", "output"),
+    "agent_bin":     lambda o, v, l: _cfg_str(o, v, l, "agent_bin", "agent_bin"),
+    "agent_args":    lambda o, v, l: _cfg_str(o, v, l, "agent_args_text", "agent_args"),
+    "yolo":          lambda o, v, l: _cfg_bool(o, v, l, "yolo_mode", "yolo"),
+    "tmux":          _cfg_tmux,
+    "keep_logs":     lambda o, v, l: _cfg_keep_logs(o, v, l, "keep_logs", "keep_logs"),
+    "keep_log":      lambda o, v, l: _cfg_keep_logs(o, v, l, "keep_logs", "keep_logs"),
+    "quiet":         lambda o, v, l: _cfg_bool(o, v, l, "quiet_mode", "quiet"),
+    "stop_on_error": lambda o, v, l: _cfg_bool(o, v, l, "stop_on_error", "stop_on_error"),
+    "verbose":       lambda o, v, l: _cfg_bool(o, v, l, "verbose_mode", "verbose"),
+    "no_color":      lambda o, v, l: _cfg_bool(o, v, l, "no_color", "no_color"),
+    "no_banner":     lambda o, v, l: _cfg_bool(o, v, l, "no_banner", "no_banner"),
+    "model":         lambda o, v, l: _cfg_str(o, v, l, "model", "model"),
+    "headless":      lambda o, v, l: _cfg_bool(o, v, l, "headless_mode", "headless"),
+    "max_turns":     lambda o, v, l: _cfg_str(o, v, l, "max_turns", "max_turns"),
+    "diff_mode":     lambda o, v, l: _cfg_bool(o, v, l, "diff_mode", "diff_mode"),
+    "clean_mode":    lambda o, v, l: _cfg_bool(o, v, l, "clean_mode", "clean_mode"),
+}
+
+
+def _parse_cfg_value(raw: str) -> str:
+    """Strip quotes and inline comments from a config value."""
+    if raw.startswith('"'):
+        return raw[1:].split('"', 1)[0]
+    if raw.startswith("'"):
+        return raw[1:].split("'", 1)[0]
+    return re.sub(r"[ \t]+#.*$", "", raw).rstrip(" \t")
+
+
 def _load_config_file(opts: Options, cfg: Path, label: str) -> None:
     """Load config from a specific file path."""
     if not cfg.is_file():
@@ -196,66 +276,12 @@ def _load_config_file(opts: Options, cfg: Path, label: str) -> None:
         if not match:
             continue
 
-        key, value = match.groups()
-        if value.startswith('"'):
-            value = value[1:].split('"', 1)[0]
-        elif value.startswith("'"):
-            value = value[1:].split("'", 1)[0]
-        else:
-            value = re.sub(r"[ \t]+#.*$", "", value).rstrip(" \t")
-
-        if key == "agent":
-            opts.agent = value
-            opts._sources["agent"] = label
-        elif key == "generations":
-            opts.generations = value
-            opts._sources["generations"] = label
-        elif key == "sleep":
-            opts.sleep_seconds = value
-            opts._sources["sleep"] = label
-        elif key == "time_budget":
-            opts.time_budget = value
-            opts._sources["time_budget"] = label
-        elif key == "output":
-            opts.output_mode = value
-            opts._sources["output"] = label
-        elif key == "agent_bin":
-            opts.agent_bin = value
-            opts._sources["agent_bin"] = label
-        elif key == "agent_args":
-            opts.agent_args_text = value
-            opts._sources["agent_args"] = label
-        elif key == "yolo" and value == "true":
-            opts.yolo_mode = True
-            opts._sources["yolo"] = label
-        elif key == "tmux":
-            opts.tmux_mode = value == "true"
-            opts._sources["tmux"] = label
-        elif key in ("keep_logs", "keep_log"):
-            if value in ("always", "session", "never"):
-                opts.keep_logs = value
-                opts._sources["keep_logs"] = label
-            elif value == "true":
-                opts.keep_logs = "always"
-                opts._sources["keep_logs"] = label
-            elif value == "false":
-                opts.keep_logs = "session"
-                opts._sources["keep_logs"] = label
-        elif key == "quiet" and value == "true":
-            opts.quiet_mode = True
-            opts._sources["quiet"] = label
-        elif key == "stop_on_error" and value == "true":
-            opts.stop_on_error = True
-            opts._sources["stop_on_error"] = label
-        elif key == "verbose" and value == "true":
-            opts.verbose_mode = True
-            opts._sources["verbose"] = label
-        elif key == "no_color" and value == "true":
-            opts.no_color = True
-            opts._sources["no_color"] = label
-        elif key == "model":
-            opts.model = value
-            opts._sources["model"] = label
+        key, raw_value = match.groups()
+        value = _parse_cfg_value(raw_value)
+        handler = _CONFIG_HANDLERS.get(key)
+        if handler is None:
+            continue
+        handler(opts, value, label)
 
 
 def load_config(opts: Options) -> None:
@@ -457,8 +483,15 @@ Options:
    --cwd PATH                         Run in a different working directory
    --verbose                          Show detailed timing and debug info
    --print-plan                       Print the effective plan and exit
-   --env KEY=VALUE                    Pass an environment variable to the agent (repeatable)
-    -V, --version                     Print version and exit
+    --env KEY=VALUE                    Pass an environment variable to the agent (repeatable)
+     --headless, --no-input             Suppress all interactive prompts (from neovim/opencode --headless)
+     --max-turns N                      Max conversation turns per generation (from codex --max-turns)
+     --diff                             Show git diff after each generation
+     --clean                            Skip loading config file (from neovim --clean)
+     --last, -L                         Show last run summary
+     --format json                      Output in JSON format (for --config-show, --history, --logs, --last)
+     --follow, -f                       Tail the most recent generation log
+      -V, --version                     Print version and exit
    -h, --help                         Show this help text
 
 Agent presets (overridable via --agent-args):
@@ -526,6 +559,7 @@ def pick_goal_with_fzf(script_path: Path, extra_args: list[str]) -> None:
     psp = shlex.quote(str(script_path))
     extra = " ".join(shlex.quote(a) for a in extra_args)
     os.execvp("sh", ["sh", "-c", f"goal=$({psp} --history | fzf) && printf '%s' \"$goal\" | {psp} {extra}"])
+    return None  # unreachable (execvp replaces process)
 
 
 def build_history_fzf_command(script_path: Path, extra_args: list[str]) -> str:
@@ -548,10 +582,13 @@ def read_history_goals(psp_dir: Path) -> list[str]:
     return goals
 
 
-def print_history(psp_dir: Path) -> int:
+def print_history(psp_dir: Path, format_output: str = "") -> int:
     goals = read_history_goals(psp_dir)
     if not goals:
         print("No history yet.", file=sys.stderr)
+        return 0
+    if format_output == "json":
+        sys.stdout.write(json.dumps({"goals": goals, "count": len(goals)}, indent=2) + "\n")
         return 0
     plain = "\n".join(goals) + "\n"
     if sys.stdout.isatty():
@@ -567,12 +604,18 @@ def print_history(psp_dir: Path) -> int:
     return 0
 
 
-def print_logs(workdir: Path) -> int:
+def print_logs(workdir: Path, format_output: str = "") -> int:
     rows = read_log_rows(workdir)
     if not rows:
         print("No generation logs found in current directory.", file=sys.stderr)
         return 0
-
+    if format_output == "json":
+        data = [
+            {"path": r.path, "agent": r.agent, "generation": r.generation, "timestamp": r.run_timestamp}
+            for r in rows
+        ]
+        sys.stdout.write(json.dumps(data, indent=2) + "\n")
+        return 0
     for row in rows:
         print(row.path)
     return 0
@@ -589,14 +632,15 @@ _psp_completion() {
         --keep-logs)      COMPREPLY=($(compgen -W "always session never" -- "$cur")); return ;;
         --plan|-p|--agent-bin|--goal|-G|--cwd|--config|--model)
                           COMPREPLY=($(compgen -f -- "$cur")); return ;;
-        --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x|--env) return ;;
+        --generations|-g|--sleep|-s|--time-budget|-t|--agent-args|-x|--env|--max-turns|--format) return ;;
     esac
     local flags="--agent --plan --install --init-plan --yolo \\
         --keep-logs --generations --sleep --time-budget --output --agent-bin --agent-args \\
         --goal --model --config --config-show --generate-completion --dry-run --history --continue --fzf \\
         --tmux --logs --no-color --no-banner --quiet --stop-on-error --cwd --verbose --print-plan --env \\
+        --headless --no-input --max-turns --diff --clean --last --format --follow \\
         --version --help \\
-        -a -p -i -g -s -t -o -x -G -C -q -V -h"
+        -a -p -i -g -s -t -o -x -G -C -q -V -h -L -f"
     if [[ "$cur" == -* ]]; then
         COMPREPLY=($(compgen -W "$flags" -- "$cur"))
     else
@@ -641,6 +685,14 @@ _psp() {
         '--verbose[show detailed timing and debug info]'
         '--print-plan[print the effective plan and exit]'
         '--env[pass env var to agent]:KEY=VALUE'
+        '--headless[suppress interactive prompts]'
+        '--no-input[alias for --headless]'
+        '--max-turns[max conversation turns per generation]:n'
+        '--diff[show git diff after each generation]'
+        '--clean[skip loading config file]'
+        '(-L --last)'{-L,--last}'[show last run summary]'
+        '--format[output format]:format:(json)'
+        '(-f --follow)'{-f,--follow}'[tail the most recent generation log]'
         '(-V --version)'{-V,--version}'[print version]'
         '(-h --help)'{-h,--help}'[show help]'
         '*:plan file:_files'
@@ -721,6 +773,23 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
         elif current == "--env":
             opts.env_vars.append(arg_value(argv, index, current))
             index += 1
+        elif current in ("--headless", "--no-input"):
+            opts.headless_mode = True
+        elif current == "--max-turns":
+            opts.max_turns = arg_value(argv, index, current)
+            opts._sources["max_turns"] = current
+            index += 1
+        elif current == "--diff":
+            opts.diff_mode = True
+        elif current == "--clean":
+            opts.clean_mode = True
+        elif current in ("--last", "-L"):
+            opts.last_mode = True
+        elif current == "--format":
+            opts.format_output = arg_value(argv, index, current)
+            index += 1
+        elif current in ("--follow", "-f"):
+            opts.follow_mode = True
         elif current in ("-a", "--agent"):
             opts.agent = arg_value(argv, index, current)
             opts._sources["agent"] = current
@@ -786,9 +855,9 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             set_plan(opts, current)
         index += 1
     if opts.history_mode:
-        return print_history(opts.psp_dir)
+        return print_history(opts.psp_dir, opts.format_output)
     if opts.logs_mode:
-        return print_logs(Path.cwd())
+        return print_logs(Path.cwd(), opts.format_output)
     return None
 
 
@@ -810,6 +879,10 @@ _CONFIG_SHOW_KEYS = [
     ("no_color",     "no_color",        "false"),
     ("no_banner",    "no_banner",       "false"),
     ("model",        "model",           ""),
+    ("headless",     "headless_mode",   "false"),
+    ("max_turns",    "max_turns",       ""),
+    ("diff_mode",    "diff_mode",       "false"),
+    ("clean_mode",   "clean_mode",      "false"),
 ]
 
 
@@ -826,6 +899,12 @@ def print_config_show(opts: Options) -> int:
             value = str(raw) if raw else default
         source = opts._sources.get(cfg_key, "default")
         rows.append((cfg_key, value, source))
+
+    if opts.format_output == "json":
+        data = {k: v for k, v, _ in rows}
+        data["_sources"] = {k: s for k, _, s in rows}
+        sys.stdout.write(json.dumps(data, indent=2) + "\n")
+        return 0
 
     for cfg_key, value, source in rows:
         source_note = f"  ({source})" if source != "default" else c("  (default)", DIM)
@@ -849,7 +928,13 @@ def read_goal(opts: Options) -> None:
             stdin_goal = match.group(1)
         if stdin_goal:
             opts.goal_text = stdin_goal
+            return
+        if opts.headless_mode:
+            quit_with("No goal provided (use --goal or pipe from stdin in headless mode)")
         return
+
+    if opts.headless_mode:
+        quit_with("No goal provided (use --goal or pipe from stdin in headless mode)")
 
     if opts.goal_text or opts.plan_explicit or opts.init_plan_path:
         return
@@ -915,8 +1000,8 @@ def validate(opts: Options) -> None:
         quit_with(f"SLEEP_SECONDS must be a non-negative number: {opts.sleep_seconds}")
     if not re.fullmatch(r"[0-9]+", opts.time_budget):
         quit_with(f"TIME_BUDGET must be a non-negative integer (seconds): {opts.time_budget}")
-    if opts.dry_run not in (0, 1):
-        quit_with(f"DRY_RUN must be 0 or 1: {opts.dry_run}")
+    if not isinstance(opts.dry_run, bool):
+        quit_with(f"DRY_RUN must be a boolean: {opts.dry_run}")
     if opts.output_mode not in {"discard", "inherit", "log"}:
         quit_with(f"OUTPUT_MODE must be 'discard', 'inherit', or 'log': {opts.output_mode}")
 
@@ -1036,12 +1121,18 @@ def run_generation_loop(
         with open(effective_plan, "r", encoding="utf-8") as stdin_handle:
             output_handle = open_output_target(opts.output_mode, gen_output_path)
             try:
+                env = dict(os.environ)
+                for env_var in opts.env_vars:
+                    if "=" in env_var:
+                        k, v = env_var.split("=", 1)
+                        env[k] = v
                 proc = subprocess.Popen(
                     agent_command,
                     stdin=stdin_handle,
                     stdout=output_handle if output_handle is not None else sys.stdout,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    env=env,
                 )
                 try:
                     proc.wait()
@@ -1085,6 +1176,9 @@ def run_generation_loop(
         if opts.verbose_mode and not opts.quiet_mode:
             _print_verbose_timing(generation, took, gen_output_path)
 
+        if opts.diff_mode and not opts.quiet_mode:
+            _print_generation_diff(generation, generation_end != generation_start)
+
         if generation < generations:
             if not opts.quiet_mode:
                 print(SEP + LINE * (header_width - 2) + SEP)
@@ -1107,7 +1201,7 @@ def run_generation_loop(
         for path in gen_log_paths:
             Path(path).unlink(missing_ok=True)
 
-    return 1
+    return 0
 
 
 def _print_verbose_timing(generation: int, took: int, gen_output_path: str | None) -> None:
@@ -1126,6 +1220,25 @@ def _print_verbose_timing(generation: int, took: int, gen_output_path: str | Non
                 size_str = f"{size} B"
             parts.append(c(f"log: {size_str}", DIM))
     print(" ".join(parts))
+
+
+def _print_generation_diff(generation: int, has_commit: bool) -> None:
+    """Show a compact git diff stat for the current generation."""
+    if has_commit:
+        result = subprocess.run(
+            ["git", "diff", "--stat", "HEAD^"],
+            capture_output=True, text=True, check=False,
+        )
+    else:
+        result = subprocess.run(
+            ["git", "diff", "--stat", "HEAD"],
+            capture_output=True, text=True, check=False,
+        )
+    if result.returncode == 0 and result.stdout.strip():
+        label = "committed" if has_commit else "unstaged"
+        print(c(f"  [diff] gen {generation} ({label})", DIM))
+        for line in result.stdout.rstrip().splitlines():
+            print(f"    {line}")
 
 
 _SIGNAL_RE = re.compile(
@@ -1200,6 +1313,52 @@ def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], 
     return f" {SEP} ".join(parts)
 
 
+def print_last_run(opts: Options) -> int:
+    """Show the most recent run summary (from --history and logs)."""
+    goals = read_history_goals(opts.psp_dir)
+    rows = read_log_rows(Path.cwd())
+    if not goals and not rows:
+        print("No previous runs found.", file=sys.stderr)
+        return 1
+
+    if opts.format_output == "json":
+        import json
+        data: dict[str, Any] = {}
+        if goals:
+            data["last_goal"] = goals[-1]
+            data["total_goals"] = len(goals)
+        if rows:
+            data["logs"] = [
+                {"path": r.path, "agent": r.agent, "generation": r.generation, "timestamp": r.run_timestamp}
+                for r in rows[-10:]
+            ]
+        sys.stdout.write(json.dumps(data, indent=2) + "\n")
+        return 0
+
+    if goals:
+        print(f"{c('Last goal:', DIM)} {c(goals[-1], CYAN)}")
+        print(f"{c('Total runs:', DIM)} {len(goals)}")
+    if rows:
+        print(f"{c('Logs in cwd:', DIM)} {len(rows)}")
+        for r in rows[-5:]:
+            print(f"  {c(r.agent, YELLOW)} gen {r.generation}  {c(r.run_timestamp, DIM)}  {r.path}")
+    return 0
+
+
+def follow_current_log(opts: Options) -> int:
+    """Tail the most recent generation log file."""
+    rows = read_log_rows(Path.cwd())
+    if not rows:
+        print("No generation logs found in current directory.", file=sys.stderr)
+        return 1
+    latest = rows[-1].path
+    try:
+        subprocess.run(["tail", "-f", latest], check=False)
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def launch_tmux(opts: Options, argv: list[str]) -> bool:
     """Launch psp in a tmux split. Returns True if launched, False to fall through."""
     if not os.environ.get("TMUX") or shutil.which("tmux") is None:
@@ -1248,14 +1407,15 @@ def main(argv: list[str]) -> int:
     _COLOR_ENABLED = not opts.no_color
     _init_colors()
 
-    # Load config (supports --config PATH override)
-    if opts.config_path:
-        cfg = Path(opts.config_path)
-        if not cfg.is_file():
-            quit_with(f"Config file not found: {opts.config_path}")
-        _load_config_file(opts, cfg, opts.config_path)
-    else:
-        load_config(opts)
+    # Load config (supports --config PATH override, --clean skips entirely)
+    if not opts.clean_mode:
+        if opts.config_path:
+            cfg = Path(opts.config_path)
+            if not cfg.is_file():
+                quit_with(f"Config file not found: {opts.config_path}")
+            _load_config_file(opts, cfg, opts.config_path)
+        else:
+            load_config(opts)
 
     if opts.config_show:
         return print_config_show(opts)
@@ -1293,6 +1453,12 @@ def main(argv: list[str]) -> int:
             quit_with("No history to continue from")
         opts.goal_text = goals[-1]
 
+    if opts.last_mode:
+        return print_last_run(opts)
+
+    if opts.follow_mode:
+        return follow_current_log(opts)
+
     if opts.cwd_override:
         cwd_path = Path(opts.cwd_override).resolve()
         if not cwd_path.is_dir():
@@ -1320,6 +1486,13 @@ def main(argv: list[str]) -> int:
     validate(opts)
 
     agent_args = split_agent_args(opts.agent_args_text)
+    if opts.max_turns:
+        if opts.agent == "codex":
+            agent_args.extend(["--max-turns", opts.max_turns])
+        elif opts.agent == "opencode":
+            agent_args.extend(["--max-turns", opts.max_turns])
+        elif opts.agent == "claude":
+            agent_args.extend(["--max-turns", opts.max_turns])
     agent_command = [opts.agent_bin, *agent_args]
 
     gen_w = len(opts.generations)

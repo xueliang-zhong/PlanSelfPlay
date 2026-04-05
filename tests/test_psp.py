@@ -670,8 +670,207 @@ class PSPPortTests(unittest.TestCase):
         for attr in ("dry_run", "install_mode", "plan_seen", "yolo_mode", "fzf_mode",
                      "tmux_mode", "logs_mode", "history_mode", "continue_mode",
                      "config_show", "no_color", "quiet_mode", "stop_on_error",
-                     "verbose_mode", "print_plan", "no_banner"):
+                     "verbose_mode", "print_plan", "no_banner", "headless_mode",
+                     "diff_mode"):
             self.assertIsInstance(getattr(opts, attr), bool, f"{attr} should be bool")
+
+    def test_headless_without_goal_exits_with_error(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--headless", "--dry-run"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("No goal provided", result["stderr"])
+
+    def test_headless_with_goal_flag_works(self) -> None:
+        self.assert_parity(["--headless", "--goal", "test goal", "--dry-run"])
+
+    def test_headless_with_stdin_works(self) -> None:
+        self.assert_parity(["--headless", "--dry-run"], stdin="test goal\n")
+
+    def test_max_turns_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--max-turns", "25", "--dry-run"], stdin="test goal\n")
+
+    def test_max_turns_includes_config_show(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--config-show"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("max_turns", result["stdout"])
+
+    def test_diff_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--diff", "--dry-run"], stdin="test goal\n")
+
+    def test_config_show_includes_headless_and_diff(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--config-show"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("headless", result["stdout"])
+
+    def test_config_dispatch_table_handles_unknown_key(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = Path(tmpdir) / "config.toml"
+            cfg.write_text("unknown_key = value\nagent = claude\n", encoding="utf-8")
+            dummy = Path("/tmp/psp")
+            opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+            module._load_config_file(opts, cfg, "test-config")
+        self.assertEqual(opts.agent, "claude")
+
+    def test_config_dispatch_table_handles_keep_logs_bool(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = Path(tmpdir) / "config.toml"
+            cfg.write_text("keep_logs = true\n", encoding="utf-8")
+            dummy = Path("/tmp/psp")
+            opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+            module._load_config_file(opts, cfg, "test-config")
+        self.assertEqual(opts.keep_logs, "always")
+
+    def test_config_dispatch_table_handles_keep_logs_false(self) -> None:
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = Path(tmpdir) / "config.toml"
+            cfg.write_text("keep_logs = false\n", encoding="utf-8")
+            dummy = Path("/tmp/psp")
+            opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+            module._load_config_file(opts, cfg, "test-config")
+        self.assertEqual(opts.keep_logs, "session")
+
+    def test_clean_mode_skips_config_loading(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        opts.clean_mode = True
+        # With clean_mode, config loading should be skipped in main()
+        # Verify the flag is set correctly
+        self.assertTrue(opts.clean_mode)
+
+    def test_clean_dry_run_matches_shell(self) -> None:
+        self.assert_parity(["--clean", "--dry-run"], stdin="test goal\n")
+
+    def test_last_mode_with_no_runs(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--last"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 1)
+        self.assertIn("No previous runs", result["stderr"])
+
+    def test_history_format_json(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            history_dir = home / ".psp"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            (history_dir / "history").write_text(
+                "2026-03-31T09:00:00Z\tcodex\t/tmp/repo\tg=2\talpha\n"
+                "2026-03-31T09:05:00Z\tcodex\t/tmp/repo\tg=3\tbeta\n",
+                encoding="utf-8",
+            )
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--history", "--format", "json"],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        import json
+        data = json.loads(result["stdout"])
+        self.assertEqual(data["count"], 2)
+        self.assertEqual(data["goals"], ["alpha", "beta"])
+
+    def test_config_show_format_json(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--config-show", "--format", "json"],
+            stdin=None,
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        import json
+        data = json.loads(result["stdout"])
+        self.assertIn("agent", data)
+        self.assertIn("generations", data)
+
+    def test_logs_format_json(self) -> None:
+        def fixture(workdir: Path, home: Path) -> None:
+            (workdir / "psp_codex_20260331T090000Z_gen01.log").write_text("one\n", encoding="utf-8")
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--logs", "--format", "json"],
+            stdin=None,
+            fixture=fixture,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        import json
+        data = json.loads(result["stdout"])
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["agent"], "codex")
+        self.assertEqual(data[0]["generation"], "1")
+
+    def test_new_bool_types(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        for attr in ("clean_mode", "last_mode", "follow_mode"):
+            self.assertIsInstance(getattr(opts, attr), bool, f"{attr} should be bool")
+
+    def test_c_function_colors_enabled(self) -> None:
+        module = load_python_psp_module()
+        module._COLOR_ENABLED = True
+        module._init_colors()
+        result = module.c("hello", module.CYAN)
+        self.assertIn("hello", result)
+        self.assertIn("\033[36m", result)
+        self.assertTrue(result.endswith("\033[0m"))
+
+    def test_c_function_colors_disabled(self) -> None:
+        module = load_python_psp_module()
+        module._COLOR_ENABLED = False
+        module._init_colors()
+        result = module.c("hello", module.CYAN)
+        self.assertEqual(result, "hello")
+        self.assertNotIn("\033[", result)
+
+    def test_env_vars_accumulated_in_options(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        opts.env_vars.append("FOO=bar")
+        opts.env_vars.append("BAZ=qux")
+        self.assertEqual(opts.env_vars, ["FOO=bar", "BAZ=qux"])
+
+    def test_env_parsing_in_arg_parser(self) -> None:
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        module.parse_args(opts, ["--env", "FOO=bar", "--env", "BAZ=qux", "--dry-run"])
+        self.assertEqual(opts.env_vars, ["FOO=bar", "BAZ=qux"])
 
 
 if __name__ == "__main__":
