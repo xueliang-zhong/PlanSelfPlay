@@ -288,7 +288,7 @@ class PSPPortTests(unittest.TestCase):
         )
 
         self.assertEqual(result["returncode"], 0)
-        self.assertEqual(result["stdout"].strip(), "psp 0.3.0-dev (<HASH>)")
+        self.assertEqual(result["stdout"].strip(), "psp 0.2.1-dev (<HASH>)")
         self.assertEqual(result["stderr"], "")
 
     def test_version_omits_git_sha_without_installed_metadata(self) -> None:
@@ -302,7 +302,7 @@ class PSPPortTests(unittest.TestCase):
         )
 
         self.assertEqual(result["returncode"], 0)
-        self.assertEqual(result["stdout"].strip(), "psp 0.3.0-dev")
+        self.assertEqual(result["stdout"].strip(), "psp 0.2.1-dev")
         self.assertEqual(result["stderr"], "")
 
     def test_claude_yolo_dry_run_matches_shell(self) -> None:

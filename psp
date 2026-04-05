@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Callable, NoReturn, TextIO
 
 
-VERSION = "0.3.0-dev"
+VERSION = "0.2.1-dev"
 
 # ── Signal handling for graceful shutdown ────────────────────────────────────
 _shutdown_requested = False
