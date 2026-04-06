@@ -1320,7 +1320,7 @@ def run_generation_loop(
         gen_log_note = ""
         if opts.output_mode == "log":
             gen_output_path = str(opts.run_dir / f"psp_{opts.agent}_{run_ts}_gen{generation:02d}.log")
-            gen_log_note = f" → {c(Path(gen_output_path).name, DIM)}"
+            gen_log_note = f" → {c('psp/' + Path(gen_output_path).name, DIM)}"
             gen_log_paths.append(gen_output_path)
 
         def gen_label(icon: str = " ") -> str:
@@ -1775,7 +1775,7 @@ def _run_loop(
         opts.plan_path = f"{Path.cwd()}/{opts.plan_path}"
 
     effective_plan, tmp_plan = prepare_effective_plan(opts)
-    plan_display = os.path.basename(tmp_plan) if tmp_plan else opts.plan_path
+    plan_display = ("psp/" + os.path.basename(tmp_plan)) if tmp_plan else opts.plan_path
     if not opts.no_banner:
         _print_header(opts, plan_display, _build_goal_note(opts), max(len(opts.generations) * 2 + 1, len("STEP")))
     try:

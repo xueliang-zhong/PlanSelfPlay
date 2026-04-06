@@ -54,7 +54,13 @@ fi
 RUN_TS=$(date -u +%Y%m%dT%H%M%SZ)
 PLAN_DISPLAY="${PLAN_PATH:-${TMP_PLAN}}"
 GOAL_DISPLAY="${GOAL:-$(grep "^GOAL:" "$PLAN_DISPLAY" 2>/dev/null | cut -c 7-90)}"
-echo "| PSP STEP | plan: $(basename "$PLAN_DISPLAY") | goal: $GOAL_DISPLAY | agent: $AGENT | gen: $GENERATIONS |"
+# Show psp/<name> for generated temp plans so the path is findable
+if [[ -n "$TMP_PLAN" ]]; then
+  PLAN_LABEL="psp/$(basename "$TMP_PLAN")"
+else
+  PLAN_LABEL="$(basename "$PLAN_DISPLAY")"
+fi
+echo "| PSP STEP | plan: $PLAN_LABEL | goal: $GOAL_DISPLAY | agent: $AGENT | gen: $GENERATIONS |"
 
 # --- loop ---
 for ((i=1; i<=GENERATIONS; i++)); do
