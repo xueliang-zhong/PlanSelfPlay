@@ -34,7 +34,7 @@ def _register_signal_handlers() -> None:
     try:
         signal.signal(signal.SIGINT, _handle_signal)
     except OSError:
-        pass  # SIGINT may be blocked in some contexts (e.g. tmux child)
+        pass  # SIGINT may be blocked in some contexts
 
 # ── Terminal colours (disabled when stdout is not a tty or --no-color) ───────
 _COLOR_ENABLED: bool = True
@@ -87,7 +87,6 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # agent_args  = ""            # override the full agent argument string
 # yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
 # keep_logs   = "always"      # always | session | never
-# tmux        = true          # true = always run in a new tmux split pane (default)
 #                              #   always  — keep logs forever (default)
 #                              #   session — keep during run, delete on exit
 #                              #   never   — delete each log immediately after the generation completes
@@ -167,7 +166,6 @@ class Options:
     init_plan_path: str = ""
     yolo_mode: bool = False
     fzf_mode: bool = False
-    tmux_mode: bool = True
     logs_mode: bool = False
     history_mode: bool = False
     continue_mode: bool = False
@@ -279,12 +277,6 @@ def _cfg_keep_logs(opts: Options, value: str, label: str, _attr: str, src_key: s
         opts._sources[src_key] = label
 
 
-def _cfg_tmux(opts: Options, value: str, label: str) -> None:
-    if not _can_apply_config_value(opts, "tmux"):
-        return
-    opts.tmux_mode = value == "true"
-    opts._sources["tmux"] = label
-
 
 _ConfigHandler = Callable[[Options, str, str], Any]
 
@@ -297,7 +289,6 @@ _CONFIG_HANDLERS: dict[str, _ConfigHandler] = {
     "agent_bin":     lambda o, v, l: _cfg_str(o, v, l, "agent_bin", "agent_bin"),
     "agent_args":    lambda o, v, l: _cfg_str(o, v, l, "agent_args_text", "agent_args"),
     "yolo":          lambda o, v, l: _cfg_bool(o, v, l, "yolo_mode", "yolo"),
-    "tmux":          _cfg_tmux,
     "keep_logs":     lambda o, v, l: _cfg_keep_logs(o, v, l, "keep_logs", "keep_logs"),
     "keep_log":      lambda o, v, l: _cfg_keep_logs(o, v, l, "keep_logs", "keep_logs"),
     "quiet":         lambda o, v, l: _cfg_bool(o, v, l, "quiet_mode", "quiet"),
@@ -386,7 +377,6 @@ def _apply_env_overrides(opts: Options) -> None:
         ("PSP_AGENT_BIN",     "agent_bin",     "agent_bin",     "str"),
         ("PSP_AGENT_ARGS",    "agent_args_text", "agent_args",  "str"),
         ("PSP_YOLO",          "yolo_mode",     "yolo",          "bool"),
-        ("PSP_TMUX",          "tmux_mode",     "tmux",          "bool"),
         ("PSP_KEEP_LOGS",     "keep_logs",     "keep_logs",     "keep_logs"),
         ("PSP_QUIET",         "quiet_mode",    "quiet",         "bool"),
         ("PSP_STOP_ON_ERROR", "stop_on_error", "stop_on_error", "bool"),
@@ -587,7 +577,6 @@ _HELP_OPTIONS = [
     ("--history", "Print ~/.psp/history and exit (pipe through fzf | psp to re-run)"),
     ("--continue, -C", "Re-run the last goal from history (like !! in bash)"),
     ("--fzf", "Interactive goal selection with metadata preview"),
-    ("--tmux", "Run psp in a new tmux split pane (requires tmux session)"),
     ("--logs", "Print generation log paths (one per line)"),
     ("--no-color", "Disable ANSI color output"),
     ("--no-banner", "Suppress the header line"),
@@ -799,7 +788,7 @@ _psp_completion() {
     local flags="--agent --plan --install --init-plan --yolo \\
         --keep-logs --generations --sleep --time-budget --output --agent-bin --agent-args \\
         --goal --model --config --config-show --generate-completion --dry-run --history --continue --fzf \\
-        --tmux --logs --no-color --no-banner --quiet --stop-on-error --cwd --verbose --print-plan --env \\
+        --logs --no-color --no-banner --quiet --stop-on-error --cwd --verbose --print-plan --env \\
         --headless --no-input --max-turns --diff --clean --last --format --follow \\
         --generation-timeout --timeout --retry --tac --stats --progress \\
         --version --help \\
@@ -838,7 +827,6 @@ _psp() {
         '--history[print past goals]'
         '(-C --continue)'{-C,--continue}'[re-run last goal]'
         '--fzf[interactive goal selection]'
-        '--tmux[run in a new tmux split pane]'
         '--logs[print log paths]'
         '--no-color[disable ANSI colors]'
         '--no-banner[suppress the header line]'
@@ -907,9 +895,6 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             index += 1
         elif current == "--fzf":
             opts.fzf_mode = True
-        elif current == "--tmux":
-            opts.tmux_mode = True
-            opts._sources["tmux"] = current
         elif current == "--logs":
             opts.logs_mode = True
         elif current == "--no-color":
@@ -1068,7 +1053,6 @@ _CONFIG_SHOW_KEYS = [
     ("agent_bin",    "agent_bin",       ""),
     ("agent_args",   "agent_args_text", ""),
     ("yolo",         "yolo_mode",       "false"),
-    ("tmux",         "tmux_mode",       "true"),
     ("keep_logs",    "keep_logs",       "always"),
     ("quiet",        "quiet_mode",      "false"),
     ("stop_on_error", "stop_on_error",  "false"),
@@ -1642,38 +1626,6 @@ def follow_current_log(opts: Options) -> int:
     return 0
 
 
-def launch_tmux(opts: Options, argv: list[str]) -> bool:
-    """Launch psp in a tmux split. Returns True if launched, False to fall through."""
-    if not os.environ.get("TMUX") or shutil.which("tmux") is None:
-        return False
-
-    psp = shlex.quote(str(opts.script_path))
-
-    # Rebuild args: drop --tmux; if goal came from stdin inject --goal
-    clean = [a for a in argv if a != "--tmux"]
-    if opts.goal_text and not any(a in clean for a in ("--goal", "-G")):
-        clean = ["--goal", opts.goal_text] + clean
-
-    # PSP_TMUX_CHILD=1 prevents the child from re-entering tmux mode (config loop)
-    psp_cmd = "PSP_TMUX_CHILD=1 " + " ".join([psp] + [shlex.quote(a) for a in clean])
-    # Run psp in a subshell with INT reset to default so Ctrl-C kills it.
-    # The outer shell catches INT with a no-op so it survives the Ctrl-C and
-    # reaches the wait loop. After psp exits (normally or via Ctrl-C), the
-    # outer shell resets its trap to exit 0 — now Ctrl-C cleanly closes the pane.
-    # This avoids the POSIX trap-reentry problem where INT is blocked while a
-    # trap handler executes, making subsequent Ctrl-C presses swallowed.
-    inner = (
-        f"trap 'true' INT; "
-        f"(trap - INT; {psp_cmd}); "
-        f"trap 'exit 0' INT; "
-        f"printf '\\n[psp done — press Ctrl-C to close]\\n'; "
-        f"while true; do sleep 3600; done"
-    )
-    cmd = f"sh -c {shlex.quote(inner)}"
-    # -v = vertical split (new pane below); -d = keep focus in current pane
-    os.execvp("tmux", ["tmux", "split-window", "-v", "-d", cmd])
-    return True  # unreachable
-
 
 def _init_colors_for_opts(opts: Options) -> None:
     """Initialize color system after config/env/CLI resolution."""
@@ -1833,10 +1785,6 @@ def main(argv: list[str]) -> int:
 
     if opts.init_plan_path:
         return _handle_init_plan(opts)
-
-    if opts.tmux_mode and not os.environ.get("PSP_TMUX_CHILD"):
-        if launch_tmux(opts, argv):
-            return 0
 
     apply_agent_presets(opts)
     validate(opts)

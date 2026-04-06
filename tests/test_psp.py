@@ -68,7 +68,7 @@ class PSPPortTests(unittest.TestCase):
     def test_init_plan_matches_shell(self) -> None:
         self.assert_parity(["--init-plan", "starter.plan"], inspect=self.inspect_init_plan)
 
-    def test_init_plan_bypasses_tmux_launch(self) -> None:
+    def test_init_plan_creates_plan_file(self) -> None:
         module = load_python_psp_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             workdir = Path(tmpdir)
@@ -77,15 +77,13 @@ class PSPPortTests(unittest.TestCase):
             try:
                 os.chdir(workdir)
                 with mock.patch.object(module, "load_config"), \
-                     mock.patch.object(module, "read_goal"), \
-                     mock.patch.object(module, "launch_tmux", return_value=True) as launch_tmux_mock:
+                     mock.patch.object(module, "read_goal"):
                     exit_code = module.main(["--init-plan", "starter.plan"])
                 starter_plan_exists = starter_plan.exists()
             finally:
                 os.chdir(previous_cwd)
 
         self.assertEqual(exit_code, 0)
-        launch_tmux_mock.assert_not_called()
         self.assertTrue(starter_plan_exists)
 
     def test_history_without_history_file_matches_shell(self) -> None:
@@ -456,7 +454,6 @@ class PSPPortTests(unittest.TestCase):
             env["HOME"] = str(home)
             env["LC_ALL"] = "C"
             env["PATH"] = f"{workdir}{os.pathsep}{env.get('PATH', '')}"
-            env["PSP_TMUX_CHILD"] = "1"  # disable tmux split during tests
             if extra_env:
                 env.update(extra_env)
 
@@ -572,7 +569,6 @@ class PSPPortTests(unittest.TestCase):
             try:
                 os.chdir(workdir)
                 with mock.patch.object(module, "load_config"), \
-                     mock.patch.object(module, "launch_tmux", return_value=False), \
                      mock.patch("sys.stdin") as mock_stdin, \
                      mock.patch("sys.stdout") as mock_stdout:
                     mock_stdin.isatty.return_value = False
@@ -639,7 +635,6 @@ class PSPPortTests(unittest.TestCase):
                         'agent_bin = "/bin/echo"',
                         'agent_args = "config args"',
                         'yolo = true',
-                        'tmux = false',
                         'keep_logs = "never"',
                         'quiet = true',
                         'stop_on_error = true',
@@ -667,7 +662,6 @@ class PSPPortTests(unittest.TestCase):
                 "--agent-bin", "/bin/cat",
                 "-x", "cli args",
                 "--yolo",
-                "--tmux",
                 "--keep-logs", "always",
                 "--quiet",
                 "--stop-on-error",
@@ -697,7 +691,6 @@ class PSPPortTests(unittest.TestCase):
         self.assertEqual(data["agent_bin"], "/bin/cat")
         self.assertEqual(data["agent_args"], "cli args")
         self.assertEqual(data["yolo"], "true")
-        self.assertEqual(data["tmux"], "true")
         self.assertEqual(data["keep_logs"], "always")
         self.assertEqual(data["quiet"], "true")
         self.assertEqual(data["stop_on_error"], "true")
@@ -838,7 +831,7 @@ class PSPPortTests(unittest.TestCase):
         dummy = Path("/tmp/psp")
         opts = module.Options(script_path=dummy, script_dir=dummy.parent)
         for attr in ("dry_run", "install_mode", "plan_seen", "yolo_mode", "fzf_mode",
-                     "tmux_mode", "logs_mode", "history_mode", "continue_mode",
+                     "logs_mode", "history_mode", "continue_mode",
                      "config_show", "no_color", "quiet_mode", "stop_on_error",
                      "verbose_mode", "print_plan", "no_banner", "headless_mode",
                      "diff_mode"):
