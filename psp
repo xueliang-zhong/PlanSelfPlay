@@ -1173,7 +1173,7 @@ def apply_agent_presets(opts: Options) -> None:
 
 
 def validate(opts: Options) -> None:
-    if not opts.goal_text or opts.plan_explicit:
+    if opts.plan_explicit:
         plan_path = Path(opts.plan_path)
         if not (plan_path.is_file() and os.access(plan_path, os.R_OK)):
             quit_with(f"Plan file is not readable: {opts.plan_path}")
