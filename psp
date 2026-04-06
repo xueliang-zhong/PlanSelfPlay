@@ -1128,12 +1128,15 @@ def read_goal(opts: Options) -> None:
         return
 
     print("Goal: ", end="", file=sys.stderr, flush=True)
+    old_sigint = signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         with open("/dev/tty", "r", encoding="utf-8") as tty:
             goal = tty.readline().rstrip("\n")
     except KeyboardInterrupt:
         print(file=sys.stderr)
         raise SystemExit(130)
+    finally:
+        signal.signal(signal.SIGINT, old_sigint)
     if not goal:
         quit_with("No goal provided")
     opts.goal_text = goal
