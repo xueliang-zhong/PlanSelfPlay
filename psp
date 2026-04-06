@@ -110,12 +110,12 @@ BUILTIN_PLAN_TEMPLATE = """DOMAIN: the current working directory and its content
 
 GOAL: {goal}
 
-LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.
+LEARN FROM CURRENT MEMORY: read psp/CURRENT_MEMORY.md first if it exists.
 
-LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes that seem relevant before changing anything so you extend the existing trajectory instead of restarting it.
+LEARN FROM PREVIOUS RUNS: read any psp/agent_*.md notes that seem relevant before changing anything so you extend the existing trajectory instead of restarting it.
 
 APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply relevant ones to your approach.
-DEAD ENDS: before designing, read FAILED_PATHS.md if it exists and never re-try any listed approach. When you abandon an approach, append it to FAILED_PATHS.md with a one-line reason.
+DEAD ENDS: before designing, read psp/FAILED_PATHS.md if it exists and never re-try any listed approach. When you abandon an approach, append it to psp/FAILED_PATHS.md with a one-line reason.
 
 AUTONOMY: never prompt the user for input or clarification. Make every decision yourself using common sense and the best-known method you can find or recall. If a choice is ambiguous, pick the most widely accepted approach and proceed.
 
@@ -123,9 +123,9 @@ STRATEGY: use a 90%/10% probability split between refining the strongest current
 
 RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how can I do this differently." Then improve the design based on rethink.
 
-AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
+AT TASK COMPLETION: if the repo explicitly allows report files, write a UTC-timestamped psp/agent_<topic>_memory.md with decisions, failed ideas, metrics, and reusable lessons.
 
-UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into CURRENT_MEMORY.md in concise form.
+UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs in this repo, merge it into psp/CURRENT_MEMORY.md in concise form.
 
 WRITE SKILLS: promote a lesson into skill_<topic>.md only when it is reusable, concrete, and likely to help many future runs. Do not create a skill for a one-off repo quirk, a weak hunch, or a trick that succeeded only once.
 
@@ -1442,7 +1442,7 @@ def run_generation_loop(
 
     if not opts.quiet_mode:
         print(SEP + LINE * (header_width - 2) + SEP)
-    summary = _run_summary(opts.goal_text, gen_log_paths, run_committed, run_total)
+    summary = _run_summary(opts.goal_text, gen_log_paths, run_committed, run_total, opts.run_dir)
     if opts.quiet_mode:
         print(summary)
     else:
@@ -1498,10 +1498,10 @@ _SIGNAL_RE = re.compile(
 )
 
 
-def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], run_total: int) -> str:
-    """Return a one-line display summary. If CURRENT_MEMORY.md is absent,
+def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], run_total: int, run_dir: Path) -> str:
+    """Return a one-line display summary. If psp/CURRENT_MEMORY.md is absent,
     synthesise it from goal + filtered log lines + results, then write it."""
-    memory = Path("CURRENT_MEMORY.md")
+    memory = run_dir / "CURRENT_MEMORY.md"
 
     # Synthesise CURRENT_MEMORY.md if absent
     if not memory.exists():
@@ -1555,7 +1555,7 @@ def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], 
             parts.append(c(result_line, result_colour))
         return f" {SEP} ".join(parts)
 
-    mem_label = c("◎ CURRENT_MEMORY.md", GREEN) + c(" generated", DIM)
+    mem_label = c("◎ psp/CURRENT_MEMORY.md", GREEN) + c(" generated", DIM)
     parts = [mem_label]
     if goal_display:
         parts.append(goal_display)
