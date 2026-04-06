@@ -93,10 +93,25 @@ echo "Maximise test coverage starting with the most critical code paths." | psp
 echo "Find and fix the top 3 performance bottlenecks; benchmark before and after each change." | psp
 echo "Minimise dead code: unused functions, imports, and unreachable branches." | psp
 ```
+## Comparison with similar agent loop tools
+
+| | **psp** | **Claude /loop** | **Karpathy autoresearch** |
+|---|---|---|---|
+| Stopping criterion | N generations (configurable) | Task complete (model judges) | Fixed compute budget per run |
+| Fitness function | Expressive prose goal | Human intent | Single numeric metric (val_bpb) |
+| Memory / knowledge | Plain-text notes + git commits | None between sessions | Git history + in-context window |
+| Scope | Any repo, any goal | Unbounded, human-steered | One file, one domain |
+| Human role | Sets goal + policy document | Orchestrates in real time | Absentee (set and forget) |
+| Autonomy level | Structured collaborative | Agentic (human-supervised) | Fully independent (narrow domain) |
+| Transparency | Inspectable markdown artefacts | Conversation only | Git log + in-context |
+| Best for | Long-horizon engineering research | General tasks, exploration | Tight metric optimisation loops |
+
+In short, Claude /loop gives breadth under human oversight; autoresearch gives maximum iteration speed within a locked metric; psp gives a transparent, memory-persistent loop where the fitness function is expressive enough for real engineering judgment.
+
 ## See Also
 
-**[doc/guide.md](doc/guide.md)** — full option reference and config guide.
+**[doc/guide.md](doc/guide.md)** - full option reference and config guide.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
