@@ -103,6 +103,7 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # timeout     = 0             # per-generation wall-clock cap in seconds (0 = no limit; CLI: --generation-timeout)
 # retry       = 0             # retry failed generations this many times with backoff
 # progress    = "auto"        # auto | plain | tty (output verbosity, from docker buildx)
+# tmux        = false         # true = open a tmux split pane above watching the current run logs
 """
 
 BUILTIN_PLAN_TEMPLATE = """DOMAIN: the current working directory and its contents.
@@ -194,6 +195,7 @@ class Options:
     tac_mode: bool = False
     stats_mode: bool = False
     progress_mode: str = "auto"
+    tmux_mode: bool = False
     _sources: dict = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -210,7 +212,7 @@ class Options:
         """Project-local psp/ folder for logs and temp plans."""
         d = Path.cwd() / "psp"
         if d.exists() and not d.is_dir():
-            d = Path.cwd() / ".psp-run"
+            d = Path.cwd() / "psp-run"
         d.mkdir(exist_ok=True)
         return d
 
@@ -306,6 +308,7 @@ _CONFIG_HANDLERS: dict[str, _ConfigHandler] = {
     "timeout":       lambda o, v, l: _cfg_str(o, v, l, "timeout_seconds", "timeout"),
     "retry":         lambda o, v, l: _cfg_str(o, v, l, "retry_count", "retry"),
     "progress":      lambda o, v, l: _cfg_str(o, v, l, "progress_mode", "progress"),
+    "tmux":          lambda o, v, l: _cfg_bool(o, v, l, "tmux_mode", "tmux"),
 }
 
 
@@ -395,6 +398,7 @@ def _apply_env_overrides(opts: Options) -> None:
         ("PSP_TAC",           "tac_mode",      "tac",           "bool"),
         ("PSP_STATS",         "stats_mode",    "stats",         "bool"),
         ("PSP_PROGRESS",      "progress_mode", "progress",      "str"),
+        ("PSP_TMUX",          "tmux_mode",     "tmux",          "bool"),
     ]
 
     for env_name, attr, src_key, kind in env_map:
@@ -595,6 +599,7 @@ _HELP_OPTIONS = [
     ("--last, -L", "Show last run summary"),
     ("--format json", "Output in JSON format (for --config-show, --history, --logs, --last)"),
     ("--follow, -f", "Tail the most recent generation log"),
+    ("--tmux", "Open a tmux split pane above watching the current run logs (requires watch)"),
     ("--generation-timeout N, --timeout N", "Per-generation wall-clock cap in seconds (0 = no limit)"),
     ("--retry N", "Retry failed generations this many times with backoff"),
     ("--tac", "Reverse order for --history/--logs (from fzf)"),
@@ -613,6 +618,19 @@ def warn_if_no_agent() -> None:
     for name, hint in _AGENT_INSTALL_HINTS:
         print(f"  {name:<10}→  {hint}")
     print()
+
+
+def launch_tmux_watcher(agent: str, run_ts: str, run_dir: Path) -> None:
+    """Open a tmux split pane above watching the current run's logs with watch+tail."""
+    if not os.environ.get("TMUX"):
+        return
+    log_glob = str(run_dir / f"psp_{agent}_{run_ts}_gen*.log")
+    watch_cmd = f"watch 'tail -n 10 $(ls -t {log_glob} 2>/dev/null | head -1) 2>/dev/null || echo waiting for logs...'"
+    subprocess.Popen(
+        ["tmux", "split-window", "-d", watch_cmd],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def append_history(opts: Options, plan_display: str) -> None:
@@ -792,7 +810,7 @@ _psp_completion() {
         --goal --model --config --config-show --generate-completion --dry-run --history --continue --fzf \\
         --logs --no-color --no-banner --quiet --stop-on-error --cwd --verbose --print-plan --env \\
         --headless --no-input --max-turns --diff --clean --last --format --follow \\
-        --generation-timeout --timeout --retry --tac --stats --progress \\
+        --generation-timeout --timeout --retry --tac --stats --progress --tmux \\
         --version --help \\
         -a -p -i -g -s -t -o -x -G -C -q -V -h -L -f"
     if [[ "$cur" == -* ]]; then
@@ -846,6 +864,7 @@ _psp() {
         '(-L --last)'{-L,--last}'[show last run summary]'
         '--format[output format]:format:(json)'
         '(-f --follow)'{-f,--follow}'[tail the most recent generation log]'
+        '--tmux[open a tmux split pane above watching current run logs]'
         '--generation-timeout[per-generation wall-clock cap]:seconds'
         '--timeout[alias for --generation-timeout]:seconds'
         '--retry[retry failed generations]:n'
@@ -955,6 +974,8 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             index += 1
         elif current in ("--follow", "-f"):
             opts.follow_mode = True
+        elif current == "--tmux":
+            opts.tmux_mode = True
         elif current in ("--generation-timeout", "--timeout"):
             opts.timeout_seconds = arg_value(argv, index, current)
             opts._sources["timeout"] = current
@@ -1069,6 +1090,7 @@ _CONFIG_SHOW_KEYS = [
     ("timeout",      "timeout_seconds",  "0"),
     ("retry",        "retry_count",      "0"),
     ("progress",     "progress_mode",    "auto"),
+    ("tmux",         "tmux_mode",        "false"),
 ]
 
 
@@ -1286,6 +1308,9 @@ def run_generation_loop(
     if opts.output_mode == "log":
         run_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
+    if opts.tmux_mode and run_ts:
+        launch_tmux_watcher(opts.agent, run_ts, opts.run_dir)
+
     append_history(opts, plan_display)
     psp_start_time = time.monotonic()
     generations = int(opts.generations)
@@ -1309,7 +1334,7 @@ def run_generation_loop(
         gen_log_note = ""
         if opts.output_mode == "log":
             gen_output_path = str(opts.run_dir / f"psp_{opts.agent}_{run_ts}_gen{generation:02d}.log")
-            gen_log_note = f" → {c('psp/' + Path(gen_output_path).name, DIM)}"
+            gen_log_note = f" → {c(opts.run_dir.name + '/' + Path(gen_output_path).name, DIM)}"
             gen_log_paths.append(gen_output_path)
 
         def gen_label(icon: str = " ") -> str:
@@ -1544,7 +1569,7 @@ def _run_summary(goal: str, gen_log_paths: list[str], run_committed: list[str], 
             parts.append(c(result_line, result_colour))
         return f" {SEP} ".join(parts)
 
-    mem_label = c("◎ psp/CURRENT_MEMORY.md", GREEN) + c(" generated", DIM)
+    mem_label = c(f"◎ {run_dir.name}/CURRENT_MEMORY.md", GREEN) + c(" generated", DIM)
     parts = [mem_label]
     if goal_display:
         parts.append(goal_display)
@@ -1732,7 +1757,7 @@ def _run_loop(
         opts.plan_path = f"{Path.cwd()}/{opts.plan_path}"
 
     effective_plan, tmp_plan = prepare_effective_plan(opts)
-    plan_display = ("psp/" + os.path.basename(tmp_plan)) if tmp_plan else opts.plan_path
+    plan_display = (opts.run_dir.name + "/" + os.path.basename(tmp_plan)) if tmp_plan else opts.plan_path
     if not opts.no_banner:
         _print_header(opts, plan_display, _build_goal_note(opts), max(len(opts.generations) * 2 + 1, len("STEP")))
     try:
