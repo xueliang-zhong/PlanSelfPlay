@@ -134,7 +134,7 @@ SELECTION:
 - if the result is clearly better, create a local git commit whose message says what changed and what improved
 - otherwise, `git reset` the repo to its pre-task state
 
-CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; never delete or modify `{plan_file}` — it is the runner's active control file for this session.
+CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; never delete .agent skill files; never delete or modify `{plan_file}` — it is the runner's active control file for this session.
 """
 
 HISTORY_INPUT_RE = re.compile(

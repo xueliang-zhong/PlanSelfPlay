@@ -79,7 +79,7 @@ AUTONOMY: never prompt the user; make every decision yourself.
 LEARN FROM PREVIOUS RUNS: read any local psp/agent_*.md notes before changing anything.
 STRATEGY: 90% refine the best path, 10% try one mutation.
 SELECTION: git commit if better; git reset otherwise; write psp/agent_<topic>.md to summarise your work.
-CONSTRAINTS: work only inside this repo; never delete $TMP_PLAN.
+CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; never delete .agent skill files; never delete or modify $TMP_PLAN — it is the runner's active control file for this session.
 PLAN
     fi
     $AGENT_CMD < "$TMP_PLAN" >"$LOG" 2>&1
