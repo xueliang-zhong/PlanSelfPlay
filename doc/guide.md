@@ -226,18 +226,18 @@ template (used when you pipe a goal without `--plan`) contains:
 ```text
 DOMAIN: the current working directory and its contents.
 GOAL: <your goal>
-LEARN FROM CURRENT MEMORY: read CURRENT_MEMORY.md first if it exists.
-LEARN FROM PREVIOUS RUNS: read any local agent_*.md notes.
+LEARN FROM CURRENT MEMORY: read psp/CURRENT_MEMORY.md first if it exists.
+LEARN FROM PREVIOUS RUNS: read any local psp/agent_*.md notes.
 APPLY SKILLS: read any skill_*.md files and apply relevant ones.
-DEAD ENDS: read FAILED_PATHS.md; never re-try listed approaches.
+DEAD ENDS: read psp/FAILED_PATHS.md; never re-try listed approaches.
 STRATEGY: 90% refine the best path / 10% test one mutation.
 RETHINK: after the first design, pause and reconsider.
-AT TASK COMPLETION: write agent_<topic>_memory.md.
-UPDATE CURRENT MEMORY: merge new lessons into CURRENT_MEMORY.md.
+AT TASK COMPLETION: write psp/agent_<topic>_memory.md.
+UPDATE CURRENT MEMORY: merge new lessons into psp/CURRENT_MEMORY.md.
 WRITE SKILLS: promote reusable techniques into skill_<topic>.md.
 SKILL HYGIENE: patch existing skills; create new ones only for new techniques.
 SELECTION: commit if better; git reset otherwise.
-CONSTRAINTS: work only inside this repo; use timeout on every scan.
+CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; never delete .agent skill files; never delete or modify the plan file.
 ```
 
 Start your own plan with:
@@ -258,10 +258,10 @@ you promote upward when a lesson earns wider reuse.
 
 | Tier | File | When | Scope |
 | --- | --- | --- | --- |
-| 1 | `agent_<timestamp>_<topic>.md` | After each run | Run-specific episode |
-| 2 | `CURRENT_MEMORY.md` | When a lesson helps the next few runs | Repo-wide, near-term |
+| 1 | `psp/agent_<timestamp>_<topic>.md` | After each run | Run-specific episode |
+| 2 | `psp/CURRENT_MEMORY.md` | When a lesson helps the next few runs | Repo-wide, near-term |
 | 3 | `skill_<topic>.md` | When a technique is reusable across many runs | Broad, durable |
-| 4 | `FAILED_PATHS.md` | When a failure pattern is clear | Repo-wide avoidance |
+| 4 | `psp/FAILED_PATHS.md` | When a failure pattern is clear | Repo-wide avoidance |
 
 **Rule:** never promote automatically — promotion always requires judgment.
 
@@ -275,7 +275,7 @@ and produces sensible output before committing to a long loop.
 **Watch live output.** Add `--output inherit` to print agent output to the
 terminal, useful when debugging a new plan.
 
-**Inspect the effective plan.** When a goal is piped in, a `plan.tmp.*` file is
+**Inspect the effective plan.** When a goal is piped in, a `psp/plan.tmp.*` file is
 written for the duration of the run. Open it to confirm the `GOAL:` line before
 the first generation finishes.
 
@@ -327,7 +327,7 @@ PSP prints two lines per generation — one when starting, one with the outcome:
 With `--output log`, a log file is created for each generation:
 
 ```
-| 🔄 PSP 1/9 | running … → psp_codex_20260331T090000Z_gen01.log
+| 🔄 PSP 1/9 | running … → psp/psp_codex_20260331T090000Z_gen01.log
 | ✅ PSP 1/9 | committed abc1234 | took: 12s
 ```
 
@@ -358,5 +358,7 @@ Set `output = "log"` in `~/.psp/config.toml` to make this the default.
 ## Inspiration
 
 Inspired by [karpathy/autoresearch](https://github.com/karpathy/autoresearch).
-The difference here is the deliberate commitment to plain-text control and a
-small shell loop — easy to inspect, fork, and modify.
+Where autoresearch locks to a single numeric metric and one file, psp targets
+open-ended goals with expressive prose and externalises agent memory as
+inspectable plain-text artefacts — making the accumulated research state
+version-controlled and readable by any future agent or human reviewer.
