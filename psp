@@ -209,6 +209,8 @@ class Options:
     def run_dir(self) -> Path:
         """Project-local psp/ folder for logs and temp plans."""
         d = Path.cwd() / "psp"
+        if d.exists() and not d.is_dir():
+            d = Path.cwd() / ".psp-run"
         d.mkdir(exist_ok=True)
         return d
 
