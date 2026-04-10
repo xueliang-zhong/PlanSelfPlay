@@ -1732,7 +1732,13 @@ def _run_dry_run(
     header_width: int,
 ) -> int:
     """Print the resolved command and exit."""
-    plan_display = opts.plan_path if opts.plan_explicit else "(builtin)"
+    if opts.plan_explicit:
+        try:
+            plan_display = str(Path(opts.plan_path).relative_to(Path.cwd()))
+        except ValueError:
+            plan_display = opts.plan_path
+    else:
+        plan_display = "(builtin)"
     if not opts.no_banner:
         _print_header(opts, plan_display, _build_goal_note(opts), max(len(opts.generations) * 2 + 1, len("STEP")))
     command_text = "".join(f" {bash_quote(part)}" for part in agent_command)
@@ -1757,7 +1763,13 @@ def _run_loop(
         opts.plan_path = f"{Path.cwd()}/{opts.plan_path}"
 
     effective_plan, tmp_plan = prepare_effective_plan(opts)
-    plan_display = (opts.run_dir.name + "/" + os.path.basename(tmp_plan)) if tmp_plan else opts.plan_path
+    if tmp_plan:
+        plan_display = opts.run_dir.name + "/" + os.path.basename(tmp_plan)
+    else:
+        try:
+            plan_display = str(Path(opts.plan_path).relative_to(Path.cwd()))
+        except ValueError:
+            plan_display = opts.plan_path
     if not opts.no_banner:
         _print_header(opts, plan_display, _build_goal_note(opts), max(len(opts.generations) * 2 + 1, len("STEP")))
     try:
