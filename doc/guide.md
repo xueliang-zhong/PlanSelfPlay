@@ -131,11 +131,17 @@ Each agent is pre-configured for non-interactive stdin use:
 
 | Agent | Default command |
 | --- | --- |
-| `codex` | `codex --full-auto exec -` |
+| `codex` | `codex --full-auto --ask-for-approval never exec -` |
 | `claude` | `claude -p -` |
 | `opencode` | `opencode run -` |
 
 Override with `--agent-bin` / `--agent-args`, or env vars `AGENT_BIN` / `AGENT_ARGS`.
+
+For fully unattended Codex runs, keep the sandboxed preset and add `--ask-for-approval never`, for example:
+
+```bash
+psp --headless --stop-on-error -a codex -x '--full-auto --ask-for-approval never exec -' -p plan.codex_auto.txt
+```
 
 ---
 

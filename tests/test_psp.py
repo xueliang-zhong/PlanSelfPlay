@@ -189,6 +189,25 @@ class PSPPortTests(unittest.TestCase):
     def test_dry_run_builtin_goal_with_multiline_text_matches_shell(self) -> None:
         self.assert_parity(["--dry-run"], stdin="line1\nline2")
 
+    def test_codex_default_dry_run_uses_no_approval(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--dry-run"],
+            stdin="reduce lines of code\n",
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("--ask-for-approval never", result["stdout"])
+        self.assertIn("codex --full-auto --ask-for-approval never exec -", result["stdout"])
+        self.assertNotIn("codex --full-auto exec -", result["stdout"])
+
+    def test_psp_nano_codex_preset_uses_no_approval(self) -> None:
+        script = (REPO_ROOT / "psp-nano").read_text(encoding="utf-8")
+        self.assertIn("codex --full-auto --ask-for-approval never exec -", script)
+        self.assertNotIn("codex --full-auto exec -", script)
+
     def test_dry_run_explicit_plan_with_goal_override_matches_shell(self) -> None:
         def fixture(workdir: Path, home: Path) -> None:
             (workdir / "plan.txt").write_text(

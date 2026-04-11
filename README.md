@@ -51,9 +51,10 @@ GOAL="your optimisation goal"
 GENERATIONS=100
 for ((i=0; i<$GENERATIONS; i++)); do
   sed "s/GOAL:.*/GOAL: $GOAL/" PLAN_TEMPLATE.txt > plan.txt
-  codex --full-auto exec - < plan.txt
+  codex --full-auto --ask-for-approval never exec - < plan.txt
 done
 ```
+
 
 PSP wraps this loop with following simple self-improvement plan template, goal and history management, and built-in presets for codex, claude, and opencode.
 

@@ -661,7 +661,7 @@ Options:
 {option_lines}
 
 Agent presets (overridable via --agent-args):
-  codex     -> codex --full-auto exec -
+  codex     -> codex --full-auto --ask-for-approval never exec -
   claude    -> claude -p -
   opencode  -> opencode run -
 
@@ -1174,7 +1174,7 @@ def apply_agent_presets(opts: Options) -> None:
             if opts.yolo_mode:
                 opts.agent_args_text = "--yolo exec -"
             else:
-                opts.agent_args_text = os.environ.get("AGENT_ARGS") or os.environ.get("CODEX_ARGS") or "--full-auto exec -"
+                opts.agent_args_text = os.environ.get("AGENT_ARGS") or os.environ.get("CODEX_ARGS") or "--full-auto --ask-for-approval never exec -"
         return
 
     if opts.agent == "claude":
