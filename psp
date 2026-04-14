@@ -108,7 +108,7 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 
 SKILL_SYNTHESIS_PROMPT = (
     "Based on all notes in psp/ folder, if a general skill pattern emerges, "
-    "create a new skill md file under .agent/skill folder. "
+    "create a new skill md file under .agents/skill folder. "
     "DO NOT modify existing skills, only add new ones if missing."
 )
 

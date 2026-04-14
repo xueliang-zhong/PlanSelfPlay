@@ -93,7 +93,7 @@ PLAN
 
   if (($i % 5 == 0)); then
     echo "| 🧠 PSP $i/$GENERATIONS | skill synthesis ..."
-    $AGENT_CMD "Based on all notes in psp/ folder, if a general skill pattern emerges, create a new skill md file under .agent/skill folder. DO NOT modify existing skill, only add new skill if missing."
+    $AGENT_CMD "Based on all notes in psp/ folder, if a general skill pattern emerges, create a new skill md file under .agents/skill folder. DO NOT modify existing skill, only add new skill if missing."
   fi
 
   echo "| ✅ PSP $i/$GENERATIONS | done"
