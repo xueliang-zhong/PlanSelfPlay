@@ -103,7 +103,14 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # timeout     = 0             # per-generation wall-clock cap in seconds (0 = no limit; CLI: --generation-timeout)
 # retry       = 0             # retry failed generations this many times with backoff
 # progress    = "auto"        # auto | plain | tty (output verbosity, from docker buildx)
+# skill_interval = 5          # synthesize skills every N generations (0 = disabled); CLI: --skill-interval
 """
+
+SKILL_SYNTHESIS_PROMPT = (
+    "Based on all notes in psp/ folder, if a general skill pattern emerges, "
+    "create a new skill md file under .agent/skill folder. "
+    "DO NOT modify existing skills, only add new ones if missing."
+)
 
 BUILTIN_PLAN_TEMPLATE = """DOMAIN: the current working directory and its contents.
 
@@ -194,6 +201,7 @@ class Options:
     tac_mode: bool = False
     stats_mode: bool = False
     progress_mode: str = "auto"
+    skill_interval: str = "5"
     _sources: dict = field(default_factory=dict, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -306,6 +314,7 @@ _CONFIG_HANDLERS: dict[str, _ConfigHandler] = {
     "timeout":       lambda o, v, l: _cfg_str(o, v, l, "timeout_seconds", "timeout"),
     "retry":         lambda o, v, l: _cfg_str(o, v, l, "retry_count", "retry"),
     "progress":      lambda o, v, l: _cfg_str(o, v, l, "progress_mode", "progress"),
+    "skill_interval": lambda o, v, l: _cfg_str(o, v, l, "skill_interval", "skill_interval"),
 }
 
 
@@ -395,6 +404,7 @@ def _apply_env_overrides(opts: Options) -> None:
         ("PSP_TAC",           "tac_mode",      "tac",           "bool"),
         ("PSP_STATS",         "stats_mode",    "stats",         "bool"),
         ("PSP_PROGRESS",      "progress_mode", "progress",      "str"),
+        ("PSP_SKILL_INTERVAL", "skill_interval", "skill_interval", "str"),
     ]
 
     for env_name, attr, src_key, kind in env_map:
@@ -597,6 +607,7 @@ _HELP_OPTIONS = [
     ("--follow, -f", "Tail the most recent generation log"),
     ("--generation-timeout N, --timeout N", "Per-generation wall-clock cap in seconds (0 = no limit)"),
     ("--retry N", "Retry failed generations this many times with backoff"),
+    ("--skill-interval N", "Synthesize skills from psp/ notes every N generations (0 = disabled, default 5)"),
     ("--tac", "Reverse order for --history/--logs (from fzf)"),
     ("--stats", "Show run statistics and exit"),
     ("--progress auto|plain|tty", "Output verbosity (from docker buildx)"),
@@ -792,7 +803,7 @@ _psp_completion() {
         --goal --model --config --config-show --generate-completion --dry-run --history --continue --fzf \\
         --logs --no-color --no-banner --quiet --stop-on-error --cwd --verbose --print-plan --env \\
         --headless --no-input --max-turns --diff --clean --last --format --follow \\
-        --generation-timeout --timeout --retry --tac --stats --progress \\
+        --generation-timeout --timeout --retry --skill-interval --tac --stats --progress \\
         --version --help \\
         -a -p -i -g -s -t -o -x -G -C -q -V -h -L -f"
     if [[ "$cur" == -* ]]; then
@@ -849,6 +860,7 @@ _psp() {
         '--generation-timeout[per-generation wall-clock cap]:seconds'
         '--timeout[alias for --generation-timeout]:seconds'
         '--retry[retry failed generations]:n'
+        '--skill-interval[synthesize skills every N generations (0=disabled)]:n'
         '--tac[reverse order for --history/--logs]'
         '--stats[show run statistics]'
         '--progress[output verbosity]:mode:(auto plain tty)'
@@ -963,6 +975,10 @@ def parse_args(opts: Options, argv: list[str]) -> int | None:
             opts.retry_count = arg_value(argv, index, current)
             opts._sources["retry"] = current
             index += 1
+        elif current == "--skill-interval":
+            opts.skill_interval = arg_value(argv, index, current)
+            opts._sources["skill_interval"] = current
+            index += 1
         elif current == "--tac":
             opts.tac_mode = True
         elif current == "--stats":
@@ -1069,6 +1085,7 @@ _CONFIG_SHOW_KEYS = [
     ("timeout",      "timeout_seconds",  "0"),
     ("retry",        "retry_count",      "0"),
     ("progress",     "progress_mode",    "auto"),
+    ("skill_interval", "skill_interval", "5"),
 ]
 
 
@@ -1193,6 +1210,8 @@ def validate(opts: Options) -> None:
         quit_with(f"TIMEOUT must be a non-negative integer (seconds): {opts.timeout_seconds}")
     if not re.fullmatch(r"[0-9]+", opts.retry_count):
         quit_with(f"RETRY must be a non-negative integer: {opts.retry_count}")
+    if not re.fullmatch(r"[0-9]+", opts.skill_interval):
+        quit_with(f"SKILL_INTERVAL must be a non-negative integer: {opts.skill_interval}")
     if not isinstance(opts.dry_run, bool):
         quit_with(f"DRY_RUN must be a boolean: {opts.dry_run}")
     if opts.output_mode not in {"discard", "inherit", "log"}:
@@ -1294,6 +1313,7 @@ def run_generation_loop(
     time_budget = int(opts.time_budget)
     timeout_per_gen = int(opts.timeout_seconds)
     max_retries = int(opts.retry_count)
+    skill_interval = int(opts.skill_interval)
 
     for generation in range(1, generations + 1):
         if _shutdown_requested:
@@ -1418,6 +1438,24 @@ def run_generation_loop(
 
         if opts.diff_mode and not opts.quiet_mode:
             _print_generation_diff(generation, generation_end != generation_start)
+
+        if skill_interval > 0 and generation % skill_interval == 0:
+            if not opts.quiet_mode:
+                print(f"{gen_label('🧠')} {c('skill synthesis …', YELLOW)}")
+            skill_env = dict(os.environ)
+            for env_var in opts.env_vars:
+                if "=" in env_var:
+                    k, v = env_var.split("=", 1)
+                    skill_env[k] = v
+            subprocess.run(
+                agent_command,
+                input=SKILL_SYNTHESIS_PROMPT,
+                stdout=open(os.devnull, "w") if opts.output_mode == "discard" else None,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=skill_env,
+                check=False,
+            )
 
         if generation < generations:
             if not opts.quiet_mode:
