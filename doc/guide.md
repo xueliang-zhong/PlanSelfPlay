@@ -119,6 +119,7 @@ Usage: psp [options] [plan-path]
 | `--generation-timeout SECONDS` | Per-generation timeout; 0 = no limit |
 | `--timeout SECONDS` | Alias for `--generation-timeout` |
 | `--retry N` | Retry failed generations with backoff |
+| `--skill-interval N` | Run skill synthesis every N generations (0 = disabled, default 5) |
 | `--stats` | Print aggregate run statistics |
 | `--tac` | Reverse ordering for `--history` / `--logs` output |
 | `--progress auto\|plain\|tty` | Output verbosity hint for compatible agents |
@@ -178,6 +179,7 @@ generations = 6
 # timeout     = 0           # per-generation timeout (CLI: --generation-timeout)
 # retry       = 0
 # progress    = "auto"     # auto | plain | tty
+# skill_interval = 5       # synthesize skills every N generations (0 = disabled); CLI: --skill-interval
 ```
 
 `psp --config-show` prints both the resolved values and the source for each one,
@@ -231,19 +233,53 @@ template (used when you pipe a goal without `--plan`) contains:
 
 ```text
 DOMAIN: the current working directory and its contents.
+
 GOAL: <your goal>
+
 LEARN FROM CURRENT MEMORY: read psp/CURRENT_MEMORY.md first if it exists.
-LEARN FROM PREVIOUS RUNS: read any local psp/agent_*.md notes.
-APPLY SKILLS: read any skill_*.md files and apply relevant ones.
-DEAD ENDS: read psp/FAILED_PATHS.md; never re-try listed approaches.
-STRATEGY: 90% refine the best path / 10% test one mutation.
-RETHINK: after the first design, pause and reconsider.
-AT TASK COMPLETION: write psp/agent_<topic>_memory.md.
-UPDATE CURRENT MEMORY: merge new lessons into psp/CURRENT_MEMORY.md.
-WRITE SKILLS: promote reusable techniques into skill_<topic>.md.
-SKILL HYGIENE: patch existing skills; create new ones only for new techniques.
-SELECTION: commit if better; git reset otherwise.
-CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; never delete .agent skill files; never delete or modify the plan file.
+
+LEARN FROM PREVIOUS RUNS: read any psp/agent_*.md notes that seem relevant before
+changing anything so you extend the existing trajectory instead of restarting it.
+
+APPLY SKILLS: before designing, read any skill_*.md files in this repo and apply
+relevant ones to your approach.
+DEAD ENDS: before designing, read psp/FAILED_PATHS.md if it exists and never re-try
+any listed approach. When you abandon an approach, append it to psp/FAILED_PATHS.md
+with a one-line reason.
+
+AUTONOMY: never prompt the user for input or clarification. Make every decision
+yourself using common sense and the best-known method you can find or recall. If a
+choice is ambiguous, pick the most widely accepted approach and proceed.
+
+STRATEGY: use a 90%/10% probability split between refining the strongest current
+path and testing one mutation that could outperform it.
+
+RETHINK: after the first design, pause and say exactly "Wait, let me rethink, how
+can I do this differently." Then improve the design based on rethink.
+
+AT TASK COMPLETION: if the repo explicitly allows report files, write a
+UTC-timestamped psp/agent_<topic>_memory.md with decisions, failed ideas, metrics,
+and reusable lessons.
+
+UPDATE CURRENT MEMORY: if this run produced a lesson likely to help upcoming runs
+in this repo, merge it into psp/CURRENT_MEMORY.md in concise form.
+
+WRITE SKILLS: promote a lesson into skill_<topic>.md only when it is reusable,
+concrete, and likely to help many future runs. Do not create a skill for a one-off
+repo quirk, a weak hunch, or a trick that succeeded only once.
+
+SKILL HYGIENE: patch an existing skill when refining the same technique; create a
+new skill only for a genuinely different technique. Keep skills short, actionable,
+and low-duplication.
+
+SELECTION:
+- if the result is clearly better, create a local git commit whose message says
+  what changed and what improved
+- otherwise, `git reset` the repo to its pre-task state
+
+CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`,
+`rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits;
+never delete .agent skill files; never delete or modify the plan file.
 ```
 
 Start your own plan with:
@@ -320,7 +356,12 @@ PSP prints two lines per generation — one when starting, one with the outcome:
 | ✅ PSP 1/9 | committed abc1234 | took: 12s
 | 🔄 PSP 2/9 | running …
 | ⚪ PSP 2/9 | no commit | took: 8s
+| 🧠 PSP 5/9 | skill synthesis …
 ```
+
+Every `--skill-interval` generations (default: 5) the runner runs an extra agent
+pass over the `psp/` notes to distill reusable techniques into `.agents/skill/`.
+The `🧠` line appears in place of the separator before that generation's sleep.
 
 ### `--output` values
 
