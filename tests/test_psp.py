@@ -1528,7 +1528,8 @@ class SecurityHardeningTests(unittest.TestCase):
     # ── Issue 4: skill synthesis uses subprocess.DEVNULL (no fd leak) ────────
 
     def test_skill_synthesis_uses_devnull_constant_not_open(self) -> None:
-        """With output_mode=discard, skill synthesis must use subprocess.DEVNULL."""
+        """Skill synthesis must always use subprocess.DEVNULL (never open()) so
+        synthesis output is suppressed regardless of output_mode and no fd leaks."""
         module = load_python_psp_module()
         with tempfile.TemporaryDirectory() as tmpdir:
             workdir = Path(tmpdir)
@@ -1539,7 +1540,7 @@ class SecurityHardeningTests(unittest.TestCase):
             opts.agent = "codex"
             opts.generations = "1"
             opts.sleep_seconds = "0"
-            opts.output_mode = "discard"
+            opts.output_mode = "log"  # not discard — synthesis must still use DEVNULL
             opts.keep_logs = "never"
             opts.quiet_mode = True
             opts.timeout_seconds = "0"

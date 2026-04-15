@@ -1483,7 +1483,7 @@ def run_generation_loop(
             subprocess.run(
                 agent_command,
                 input=SKILL_SYNTHESIS_PROMPT,
-                stdout=subprocess.DEVNULL if opts.output_mode == "discard" else None,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.STDOUT,
                 text=True,
                 env=skill_env,
