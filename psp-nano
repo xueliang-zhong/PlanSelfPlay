@@ -68,24 +68,28 @@ for ((i=1; i<=GENERATIONS; i++)); do
   echo "| 🔄 PSP $i/$GENERATIONS | running ... $LOG"
 
   if [[ "$BUILTIN_PLAN" -eq 1 ]]; then
-    # Use plan.template.txt if present, else inline template
+    # Use plan.template.txt if present, else inline template.
+    # Use awk (not sed) to substitute GOAL safely: handles /, &, and newlines.
     if [[ -f plan.template.txt ]]; then
-      sed "s/GOAL:.*/GOAL: $GOAL/" plan.template.txt > "$TMP_PLAN"
+      awk -v goal="$GOAL" '/^GOAL:/{print "GOAL: " goal; next} 1' plan.template.txt > "$TMP_PLAN"
     else
-      cat > "$TMP_PLAN" <<PLAN
-DOMAIN: the current working directory and its contents.
-GOAL: $GOAL
+      # Use a quoted heredoc (<<'PLAN') to prevent shell expansion of $GOAL,
+      # then write the dynamic parts via printf/awk to avoid injection.
+      {
+        printf 'DOMAIN: the current working directory and its contents.\nGOAL: %s\n' "$GOAL"
+        cat <<'PLAN'
 AUTONOMY: never prompt the user; make every decision yourself.
 LEARN FROM PREVIOUS RUNS: read any local psp/agent_*.md notes before changing anything.
 STRATEGY: 90% refine the best path, 10% try one mutation.
 SELECTION: git commit if better; git reset otherwise; write psp/agent_<topic>.md to summarise your work.
-CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; never delete .agent skill files; never delete or modify $TMP_PLAN — it is the runner's active control file for this session.
 PLAN
+        printf 'CONSTRAINTS: work only inside this repo; never scan outside it; wrap every `find`, `rg`, or `grep` with `timeout` no longer than 10 minutes; prefer reversible edits; never delete .agent skill files; never delete or modify %s — it is the runner'"'"'s active control file for this session.\n' "$TMP_PLAN"
+      } > "$TMP_PLAN"
     fi
     $AGENT_CMD < "$TMP_PLAN" >"$LOG" 2>&1
   else
     if [[ -n "$GOAL" ]]; then
-      sed "s/GOAL:.*/GOAL: $GOAL/" "$PLAN_PATH" | $AGENT_CMD >"$LOG" 2>&1
+      awk -v goal="$GOAL" '/^GOAL:/{print "GOAL: " goal; next} 1' "$PLAN_PATH" | $AGENT_CMD >"$LOG" 2>&1
     else
       $AGENT_CMD < "$PLAN_PATH" >"$LOG" 2>&1
     fi
@@ -93,9 +97,10 @@ PLAN
 
   if (($i % 5 == 0)); then
     echo "| 🧠 PSP $i/$GENERATIONS | skill synthesis ..."
-    $AGENT_CMD "Based on all notes in psp/ folder, if a general skill pattern emerges, create a new skill md file under .agents/skill folder. DO NOT modify existing skill, only add new skill if missing."
+    # Pipe the prompt to the agent's stdin (do not pass as a positional argument).
+    printf '%s\n' "Based on all notes in psp/ folder, if a general skill pattern emerges, create a new skill md file under .agents/skill folder. DO NOT modify existing skill, only add new skill if missing." | $AGENT_CMD >"$LOG.skill" 2>&1
   fi
 
   echo "| ✅ PSP $i/$GENERATIONS | done"
-  [[ $i -lt $GENERATIONS ]] && sleep 2
+  if [[ $i -lt $GENERATIONS ]]; then sleep 2; fi
 done

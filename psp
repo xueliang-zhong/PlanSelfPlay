@@ -327,6 +327,19 @@ def _parse_cfg_value(raw: str) -> str:
     return re.sub(r"[ \t]+#.*$", "", raw).rstrip(" \t")
 
 
+def _warn_if_world_writable(path: Path, kind: str = "path") -> None:
+    """Print a warning if path is world- or group-writable (mode & 0o022)."""
+    try:
+        if path.stat().st_mode & 0o022:
+            print(
+                f"PSP WARNING | {kind} {path} is world- or group-writable; "
+                "it could be tampered with by other users on this system",
+                file=sys.stderr,
+            )
+    except OSError:
+        pass
+
+
 def _load_config_file(opts: Options, cfg: Path, label: str) -> None:
     """Load config from a specific file path."""
     if not cfg.is_file():
@@ -444,7 +457,10 @@ def write_default_config(psp_dir: Path) -> int:
     if cfg.exists():
         print(f"Config already exists: {cfg}")
         return 1
-    cfg.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+    # Create with user-only permissions (0o600) to protect sensitive values.
+    fd = os.open(str(cfg), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(CONFIG_TEMPLATE)
     print(f"Wrote default config to {cfg}")
     return 0
 
@@ -578,9 +594,9 @@ _HELP_OPTIONS = [
     ("--sleep SECONDS, -s", "Non-negative delay between generations"),
     ("--time-budget SECONDS, -t", "Stop after this many wall-clock seconds (0 = no limit)"),
     ("--output discard|inherit|log, -o", "Agent output handling (default: log = per-generation files)"),
-    ("--agent-bin PATH", "Agent executable override"),
+    ("--agent-bin PATH", "Agent executable override (security: executes the named binary with full agent permissions; use only trusted paths)"),
     ("--agent-args STRING, -x", "Full agent args override (replaces preset defaults)"),
-    ("--goal TEXT, -G", "Set the goal directly (stdin takes priority if piped)"),
+    ("--goal TEXT, -G", "Set the goal directly (stdin takes priority if piped; goal text is embedded verbatim in agent instructions — use only trusted input)"),
     ("--model MODEL", "LLM model to use (e.g. gpt-4o, claude-sonnet-4-20250514)"),
     ("--config PATH", "Use an alternative config file instead of ~/.psp/config.toml"),
     ("--config-show", "Print resolved config with source of each value and exit"),
@@ -1125,7 +1141,7 @@ def print_config_show(opts: Options) -> int:
 
 def read_goal(opts: Options) -> None:
     if not sys.stdin.isatty():
-        stdin_goal = sys.stdin.read().rstrip("\n")
+        stdin_goal = sys.stdin.read(65536).rstrip("\n")
         match = HISTORY_INPUT_RE.match(stdin_goal)
         if match:
             stdin_goal = match.group(1)
@@ -1161,7 +1177,24 @@ def read_goal(opts: Options) -> None:
     opts.goal_text = goal
 
 
+_KNOWN_AGENT_BINS = {"codex", "claude", "opencode"}
+
+
+def _warn_if_custom_agent_bin(opts: Options) -> None:
+    """Emit a security warning when --agent-bin points to an unexpected binary."""
+    if opts._sources.get("agent_bin") not in ("--agent-bin", "--codex-bin"):
+        return
+    basename = Path(opts.agent_bin).name
+    if basename not in _KNOWN_AGENT_BINS:
+        print(
+            f"PSP WARNING | --agent-bin '{opts.agent_bin}' is not a known agent binary "
+            f"({', '.join(sorted(_KNOWN_AGENT_BINS))}); ensure you trust this executable",
+            file=sys.stderr,
+        )
+
+
 def apply_agent_presets(opts: Options) -> None:
+    _warn_if_custom_agent_bin(opts)
     if opts.agent == "codex":
         if not opts.agent_bin:
             opts.agent_bin = os.environ.get("AGENT_BIN") or os.environ.get("CODEX_BIN") or "codex"
@@ -1450,7 +1483,7 @@ def run_generation_loop(
             subprocess.run(
                 agent_command,
                 input=SKILL_SYNTHESIS_PROMPT,
-                stdout=open(os.devnull, "w") if opts.output_mode == "discard" else None,
+                stdout=subprocess.DEVNULL if opts.output_mode == "discard" else None,
                 stderr=subprocess.STDOUT,
                 text=True,
                 env=skill_env,
@@ -1682,6 +1715,8 @@ def _resolve_runtime_options(opts: Options) -> None:
     _load_config_for_opts(opts)
     _apply_env_overrides(opts)
     _init_colors_for_opts(opts)
+    if opts.psp_dir.exists():
+        _warn_if_world_writable(opts.psp_dir, "PSP_DIR")
 
 
 def _load_config_for_opts(opts: Options) -> None:
@@ -1692,6 +1727,7 @@ def _load_config_for_opts(opts: Options) -> None:
         cfg = Path(opts.config_path)
         if not cfg.is_file():
             quit_with(f"Config file not found: {opts.config_path}")
+        _warn_if_world_writable(cfg, "config file")
         _load_config_file(opts, cfg, opts.config_path)
     else:
         load_config(opts)

@@ -1414,5 +1414,320 @@ class PSPPortTests(unittest.TestCase):
         self.assert_parity(["--config-show", "--dry-run"], stdin="test goal\n")
 
 
+class SecurityHardeningTests(unittest.TestCase):
+    """SDL security hardening tests for psp (issues 4–10)."""
+
+    REPO_ROOT = REPO_ROOT
+
+    def _run_psp(
+        self,
+        args: list[str],
+        stdin: str | None = None,
+        extra_env: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            workdir = root / "work"
+            home = root / "home"
+            workdir.mkdir()
+            home.mkdir()
+            env = os.environ.copy()
+            env["HOME"] = str(home)
+            env["LC_ALL"] = "C"
+            if extra_env:
+                env.update(extra_env)
+            completed = subprocess.run(
+                [str(PYTHON_ENTRYPOINT), *args],
+                cwd=workdir,
+                input=stdin,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+        return {
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+        }
+
+    # ── Issue 8: stdin capped at 64 KiB ─────────────────────────────────────
+
+    def test_stdin_read_is_capped_at_64k(self) -> None:
+        """read_goal must call stdin.read(65536) not stdin.read()."""
+        module = load_python_psp_module()
+        dummy = Path("/tmp/psp")
+        opts = module.Options(script_path=dummy, script_dir=dummy.parent)
+        with mock.patch("sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = False
+            mock_stdin.read.return_value = "A" * 65536
+            module.read_goal(opts)
+        mock_stdin.read.assert_called_once_with(65536)
+
+    # ── Issue 10: config.toml created with 0o600 ─────────────────────────────
+
+    def test_write_default_config_creates_file_with_mode_600(self) -> None:
+        """write_default_config must create config.toml with mode 0o600."""
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            psp_dir = Path(tmpdir) / ".psp"
+            module.write_default_config(psp_dir)
+            cfg = psp_dir / "config.toml"
+            self.assertTrue(cfg.exists())
+            mode = cfg.stat().st_mode & 0o777
+            self.assertEqual(mode, 0o600, f"config.toml got {oct(mode)}, want 0o600")
+
+    # ── Issue 6: world-writable --config warns ───────────────────────────────
+
+    def test_world_writable_config_file_prints_warning(self) -> None:
+        """--config pointing at a world-writable file must warn to stderr."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cfg = Path(tmpdir) / "config.toml"
+            cfg.write_text('agent = "codex"\n', encoding="utf-8")
+            cfg.chmod(0o666)  # world-writable
+            result = self._run_psp(["--config", str(cfg), "--config-show"])
+            self.assertIn("WARNING", result["stderr"])
+
+    # ── Issue 7: world-writable PSP_DIR warns ────────────────────────────────
+
+    def test_world_writable_psp_dir_prints_warning(self) -> None:
+        """PSP_DIR pointing at a world-writable directory must warn to stderr."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            psp_dir = Path(tmpdir) / "evil_psp"
+            psp_dir.mkdir()
+            psp_dir.chmod(0o777)  # world-writable
+            result = self._run_psp(
+                ["--config-show"],
+                extra_env={"PSP_DIR": str(psp_dir)},
+            )
+            self.assertIn("WARNING", result["stderr"])
+
+    # ── Issue 5: unknown --agent-bin warns ───────────────────────────────────
+
+    def test_unknown_agent_bin_prints_warning(self) -> None:
+        """--agent-bin with a non-standard binary name must warn to stderr."""
+        result = self._run_psp(
+            ["--agent-bin", "/bin/cat", "--dry-run"],
+            stdin="test goal\n",
+        )
+        self.assertIn("WARNING", result["stderr"])
+
+    # ── Issue 9: --goal help text notes trusted-input requirement ────────────
+
+    def test_help_goal_flag_notes_trusted_input(self) -> None:
+        """--goal/-G help line must mention that input is embedded verbatim."""
+        result = self._run_psp(["--help"])
+        self.assertEqual(result["returncode"], 0)
+        lines = result["stdout"].splitlines()
+        goal_line = next(
+            (l for l in lines if "--goal" in l and "-G" in l), None
+        )
+        self.assertIsNotNone(goal_line, "--goal/-G option not found in help")
+        self.assertIn("trusted", goal_line.lower())
+
+    # ── Issue 4: skill synthesis uses subprocess.DEVNULL (no fd leak) ────────
+
+    def test_skill_synthesis_uses_devnull_constant_not_open(self) -> None:
+        """With output_mode=discard, skill synthesis must use subprocess.DEVNULL."""
+        module = load_python_psp_module()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            plan = workdir / "plan.txt"
+            plan.write_text("DOMAIN: test\nGOAL: test\n", encoding="utf-8")
+            dummy = workdir / "psp"
+            opts = module.Options(script_path=dummy, script_dir=workdir)
+            opts.agent = "codex"
+            opts.generations = "1"
+            opts.sleep_seconds = "0"
+            opts.output_mode = "discard"
+            opts.keep_logs = "never"
+            opts.quiet_mode = True
+            opts.timeout_seconds = "0"
+            opts.retry_count = "0"
+            opts.skill_interval = "1"  # trigger synthesis on gen 1
+            opts.env_vars = []
+            opts.diff_mode = False
+            opts.verbose_mode = False
+            module._COLOR_ENABLED = False
+            module._init_colors()
+
+            previous_cwd = Path.cwd()
+            captured_runs: list[dict] = []
+
+            def fake_run(cmd, **kwargs):
+                captured_runs.append({"cmd": cmd, "stdout": kwargs.get("stdout")})
+                return mock.MagicMock(returncode=0)
+
+            try:
+                os.chdir(workdir)
+                with mock.patch.object(module, "append_history"), \
+                     mock.patch.object(module, "git_head", return_value="abc1234"), \
+                     mock.patch.object(module.subprocess, "Popen") as mock_popen, \
+                     mock.patch.object(module.subprocess, "run", side_effect=fake_run):
+                    fake_proc = mock.MagicMock()
+                    fake_proc.returncode = 0
+                    fake_proc.wait.return_value = None
+                    fake_proc.poll.return_value = 0
+                    mock_popen.return_value = fake_proc
+                    module.run_generation_loop(
+                        opts,
+                        ["echo"],
+                        str(plan),
+                        "plan.txt",
+                        header_width=9,
+                    )
+            finally:
+                os.chdir(previous_cwd)
+
+        # Find the skill synthesis subprocess.run call
+        synthesis_calls = [
+            r for r in captured_runs
+            if r["cmd"] == ["echo"]  # agent_command used for synthesis
+        ]
+        self.assertTrue(synthesis_calls, "Skill synthesis subprocess.run was not called")
+        stdout_arg = synthesis_calls[0]["stdout"]
+        # Must be subprocess.DEVNULL (an integer constant), NOT a file object
+        self.assertEqual(
+            stdout_arg,
+            subprocess.DEVNULL,
+            f"Expected subprocess.DEVNULL ({subprocess.DEVNULL}), got {stdout_arg!r}",
+        )
+
+
+class PspNanoSecurityTests(unittest.TestCase):
+    """SDL security hardening tests for psp-nano (issues 1–3)."""
+
+    NANO_SCRIPT = REPO_ROOT / "psp-nano"
+
+    def _run_nano(
+        self,
+        goal: str,
+        extra_args: list[str] | None = None,
+        extra_files: dict[str, str] | None = None,
+    ) -> dict[str, object]:
+        """Run psp-nano with a fake codex agent in an isolated tmpdir."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            (workdir / "psp").mkdir()
+
+            # Fake codex: records stdin to a file and exits 0
+            fake_codex = workdir / "codex"
+            fake_codex.write_text(
+                "#!/usr/bin/env bash\ncat > psp/agent_stdin.log\n",
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+
+            if extra_files:
+                for name, content in extra_files.items():
+                    (workdir / name).write_text(content, encoding="utf-8")
+
+            env = os.environ.copy()
+            env["PATH"] = f"{workdir}:{env.get('PATH', '')}"
+            env["LC_ALL"] = "C"
+
+            args = ["bash", str(self.NANO_SCRIPT), "-g", "1"]
+            if extra_args:
+                args.extend(extra_args)
+
+            completed = subprocess.run(
+                args,
+                cwd=workdir,
+                input=goal,
+                text=True,
+                capture_output=True,
+                env=env,
+                timeout=30,
+            )
+
+            # Read what the agent received on stdin (if anything)
+            agent_log = workdir / "psp" / "agent_stdin.log"
+            agent_received = (
+                agent_log.read_text(encoding="utf-8", errors="replace")
+                if agent_log.exists()
+                else ""
+            )
+
+        return {
+            "returncode": completed.returncode,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
+            "agent_received": agent_received,
+        }
+
+    # ── Issue 1: heredoc command injection ───────────────────────────────────
+
+    def test_goal_with_heredoc_terminator_does_not_inject_shell(self) -> None:
+        """A multi-line goal must be written verbatim into the plan file
+        without any lines being executed as shell commands by psp-nano."""
+        sentinel = "PLAN"  # same word as the heredoc terminator
+        goal = f"improve tests\n{sentinel}\nexport INJECTED=yes"
+        result = self._run_nano(goal)
+        # Script must exit cleanly — no shell injection by psp-nano itself
+        self.assertEqual(result["returncode"], 0, f"stderr: {result['stderr']}")
+        # Agent must receive the full multi-line goal content in the plan
+        self.assertIn("improve tests", result["agent_received"])
+
+    def test_goal_with_backtick_does_not_execute_command(self) -> None:
+        """Backtick expressions inside $GOAL must appear literally in the plan,
+        not be executed by the shell as command substitutions."""
+        marker = "PSP_BACKTICK_EXECUTED"
+        backtick_goal = f"improve tests\n`echo {marker}`"
+        result = self._run_nano(backtick_goal)
+        # Script must succeed
+        self.assertEqual(result["returncode"], 0, f"stderr: {result['stderr']}")
+        # The plan must contain the literal backtick string, not the executed result.
+        # If execution happened, agent_received would contain the bare marker without
+        # surrounding backticks, replacing the backtick expression.
+        # Both safe and unsafe cases emit the marker in the GOAL_DISPLAY header,
+        # so we check the agent's stdin (the plan file content) for the literal form.
+        self.assertIn("`echo " + marker + "`", result["agent_received"])
+
+    # ── Issue 2: sed delimiter / backreference injection ─────────────────────
+
+    def test_goal_with_forward_slash_does_not_crash_sed(self) -> None:
+        """A goal containing '/' must not break the sed substitution command."""
+        tricky_goal = "improve/fix the parser"
+        result = self._run_nano(
+            tricky_goal,
+            extra_files={
+                "plan.template.txt": "DOMAIN: test\nGOAL: old\nCONSTRAINTS: none\n",
+            },
+        )
+        self.assertEqual(result["returncode"], 0, f"stderr: {result['stderr']}")
+
+    def test_goal_with_ampersand_does_not_corrupt_plan(self) -> None:
+        """A goal containing '&' must be written literally into the plan."""
+        goal = "fix bugs & add tests"
+        result = self._run_nano(
+            goal,
+            extra_files={
+                "plan.template.txt": "DOMAIN: test\nGOAL: placeholder\nCONSTRAINTS: none\n",
+            },
+        )
+        self.assertEqual(result["returncode"], 0, f"stderr: {result['stderr']}")
+        # The agent should have received the literal '&', not a sed backreference expansion
+        self.assertIn("fix bugs & add tests", result["agent_received"])
+
+    # ── Issue 3: skill synthesis must pipe prompt to agent stdin ─────────────
+
+    def test_skill_synthesis_line_pipes_prompt_to_agent(self) -> None:
+        """The skill synthesis call in psp-nano must pipe the prompt to stdin."""
+        script = self.NANO_SCRIPT.read_text(encoding="utf-8")
+        lines = script.splitlines()
+        synthesis_line = next(
+            (l for l in lines if "Based on all notes" in l), None
+        )
+        self.assertIsNotNone(synthesis_line, "Skill synthesis line not found in psp-nano")
+        # Must use a pipe so the prompt reaches the agent's stdin
+        self.assertIn("|", synthesis_line,
+                      "Skill synthesis must pipe the prompt to agent stdin")
+        # Must NOT pass the prompt as a positional argument
+        self.assertNotRegex(
+            synthesis_line, r'\$AGENT_CMD\s+"',
+            "Prompt must not be a positional arg to $AGENT_CMD",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
