@@ -24,7 +24,7 @@ done
 
 # --- agent preset ---
 case "$AGENT" in
-  codex)    AGENT_CMD="codex --full-auto --ask-for-approval never exec -" ;;
+  codex)    AGENT_CMD="codex -a never -s workspace-write exec -" ;;
   claude)   AGENT_CMD="claude -p -" ;;
   opencode) AGENT_CMD="opencode run -" ;;
   *)        echo "Unknown agent: $AGENT" >&2; exit 1 ;;

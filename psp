@@ -85,7 +85,7 @@ CONFIG_TEMPLATE = """# ~/.psp/config.toml — PSP user defaults
 # output      = "log"         # discard | inherit | log  (default: log = per-generation files in $PWD)
 # agent_bin   = ""            # override the agent executable path
 # agent_args  = ""            # override the full agent argument string
-# yolo        = false         # true = pass --yolo / --dangerously-skip-permissions
+# yolo        = false         # true = pass Codex/Claude permission-bypass flags
 # keep_logs   = "always"      # always | session | never
 #                              #   always  — keep logs forever (default)
 #                              #   session — keep during run, delete on exit
@@ -670,7 +670,7 @@ Options:
 {option_lines}
 
 Agent presets (overridable via --agent-args):
-  codex     -> codex --full-auto --ask-for-approval never exec -
+  codex     -> codex -a never -s workspace-write exec -
   claude    -> claude -p -
   opencode  -> opencode run -
 
@@ -1200,9 +1200,9 @@ def apply_agent_presets(opts: Options) -> None:
             opts.agent_bin = os.environ.get("AGENT_BIN") or os.environ.get("CODEX_BIN") or "codex"
         if not opts.agent_args_text:
             if opts.yolo_mode:
-                opts.agent_args_text = "--yolo exec -"
+                opts.agent_args_text = "--dangerously-bypass-approvals-and-sandbox exec -"
             else:
-                opts.agent_args_text = os.environ.get("AGENT_ARGS") or os.environ.get("CODEX_ARGS") or "--full-auto --ask-for-approval never exec -"
+                opts.agent_args_text = os.environ.get("AGENT_ARGS") or os.environ.get("CODEX_ARGS") or "-a never -s workspace-write exec -"
         return
 
     if opts.agent == "claude":

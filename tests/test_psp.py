@@ -189,7 +189,7 @@ class PSPPortTests(unittest.TestCase):
     def test_dry_run_builtin_goal_with_multiline_text_matches_shell(self) -> None:
         self.assert_parity(["--dry-run"], stdin="line1\nline2")
 
-    def test_codex_default_dry_run_uses_no_approval(self) -> None:
+    def test_codex_default_dry_run_uses_current_unattended_sandbox_flags(self) -> None:
         result = self.run_variant(
             PYTHON_ENTRYPOINT,
             ["--dry-run"],
@@ -199,14 +199,28 @@ class PSPPortTests(unittest.TestCase):
             extra_env=None,
         )
         self.assertEqual(result["returncode"], 0)
-        self.assertIn("--ask-for-approval never", result["stdout"])
-        self.assertIn("codex --full-auto --ask-for-approval never exec -", result["stdout"])
-        self.assertNotIn("codex --full-auto exec -", result["stdout"])
+        self.assertIn("codex -a never -s workspace-write exec -", result["stdout"])
+        self.assertNotIn("--full-auto", result["stdout"])
+        self.assertNotIn("--ask-for-approval", result["stdout"])
 
-    def test_psp_nano_codex_preset_uses_no_approval(self) -> None:
+    def test_codex_yolo_dry_run_uses_current_bypass_flag(self) -> None:
+        result = self.run_variant(
+            PYTHON_ENTRYPOINT,
+            ["--yolo", "--dry-run"],
+            stdin="ship it\n",
+            fixture=None,
+            inspect=None,
+            extra_env=None,
+        )
+        self.assertEqual(result["returncode"], 0)
+        self.assertIn("codex --dangerously-bypass-approvals-and-sandbox exec -", result["stdout"])
+        self.assertNotIn("--yolo exec -", result["stdout"])
+
+    def test_psp_nano_codex_preset_uses_current_unattended_sandbox_flags(self) -> None:
         script = (REPO_ROOT / "psp-nano").read_text(encoding="utf-8")
-        self.assertIn("codex --full-auto --ask-for-approval never exec -", script)
-        self.assertNotIn("codex --full-auto exec -", script)
+        self.assertIn("codex -a never -s workspace-write exec -", script)
+        self.assertNotIn("--full-auto", script)
+        self.assertNotIn("--ask-for-approval", script)
 
     def test_dry_run_explicit_plan_with_goal_override_matches_shell(self) -> None:
         def fixture(workdir: Path, home: Path) -> None:
